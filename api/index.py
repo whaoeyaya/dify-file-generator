@@ -10,28 +10,40 @@ from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from pptx import Presentation
 from pptx.util import Inches as PptInches, Pt as PptPt
-from pptx.dml.color import RGBColor as PptRGBColor
 
 DOWNLOAD_DIR = os.path.join(os.getcwd(), 'static')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-def set_font(run, font_name='微软雅黑', size_pt=10.5, bold=False, color_rgb=(51, 51, 51)):
+# -------------------------------------------------------------
+# 核心修复函数：彻底解决 Word 中文显示为方框/乱码问题
+# -------------------------------------------------------------
+def apply_text_with_font(paragraph_or_cell, text, font_name='微软雅黑', size_pt=10.5, bold=False, color_rgb=(51, 51, 51)):
+    # 获取段落对象
+    p = paragraph_or_cell.paragraphs[0] if hasattr(paragraph_or_cell, 'paragraphs') else paragraph_or_cell
+    p.text = "" # 清空默认文本
+    run = p.add_run(text)
+    
+    # 设置基础字体属性
     run.font.name = font_name
-    rPr = run._r.get_or_add_rPr()
-    rFonts = OxmlElement('w:rFonts')
-    rFonts.set(qn('w:ascii'), font_name)
-    rFonts.set(qn('w:eastAsia'), font_name)
-    rPr.append(rFonts)
     run.font.size = Pt(size_pt)
     run.bold = bold
     run.font.color.rgb = RGBColor(*color_rgb)
+    
+    # 底层强制绑定中文字体（解决方框乱码的关键！）
+    rPr = run._r.get_or_add_rPr()
+    rFonts = OxmlElement('w:rFonts')
+    rFonts.set(qn('w:ascii'), font_name)
+    rFonts.set(qn('w:hAnsi'), font_name)
+    rFonts.set(qn('w:eastAsia'), font_name)
+    rFonts.set(qn('w:cs'), font_name)
+    rPr.append(rFonts)
 
 def set_cell_bg(cell, hex_color="F7F9FA"):
     tcPr = cell._tc.get_or_add_tcPr()
     shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}"/>')
     tcPr.append(shd)
 
-def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
+def set_cell_margins(cell, top=120, bottom=120, left=150, right=150):
     tcPr = cell._tc.get_or_add_tcPr()
     tcMar = OxmlElement('w:tcMar')
     for m, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
@@ -80,7 +92,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             reflection = teaching_design.get('reflection') or "本节课学生对图例的认知清晰，绘制环节需进一步加强工具使用的指导。"
 
             # -------------------------------------------------------------
-            # 1. 严格按照图片模板渲染 Word 文档 (.docx)
+            # 1. 生成标准的 Word 格式文档
             # -------------------------------------------------------------
             doc = Document()
             for s in doc.sections:
@@ -89,50 +101,40 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 s.left_margin = Inches(0.8)
                 s.right_margin = Inches(0.8)
 
-            # 顶部大标题
+            # 大标题
             p_head = doc.add_paragraph()
             p_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r_head = p_head.add_run(f"《{lesson_title}》教学设计")
-            set_font(r_head, size_pt=18, bold=True, color_rgb=(31, 78, 121))
+            apply_text_with_font(p_head, f"《{lesson_title}》教学设计", size_pt=18, bold=True, color_rgb=(31, 78, 121))
 
-            # 创建 6 列的基础大表格
             table = doc.add_table(rows=0, cols=6)
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.style = 'Table Grid'
 
-            # 辅助函数：添加单行/合并行
             def add_row_info(k1, v1, k2, v2, k3, v3):
                 row = table.add_row()
-                cells = row.cells
-                cells[0].text, cells[1].text = k1, v1
-                cells[2].text, cells[3].text = k2, v2
-                cells[4].text, cells[5].text = k3, v3
-                for i in [0, 2, 4]:
-                    set_cell_bg(cells[i], "F2F4F7")
-                    set_font(cells[i].paragraphs[0].runs[0], bold=True)
+                cs = row.cells
+                pairs = [(cs[0], k1, True), (cs[1], v1, False), (cs[2], k2, True), (cs[3], v2, False), (cs[4], k3, True), (cs[5], v3, False)]
+                for cell, txt, is_key in pairs:
+                    apply_text_with_font(cell, txt, bold=is_key)
+                    if is_key:
+                        set_cell_bg(cell, "F2F4F7")
 
             def add_merged_row(label, value=""):
                 row = table.add_row()
-                cells = row.cells
-                # 合并 1~5 列
-                a = cells[1].merge(cells[2]).merge(cells[3]).merge(cells[4]).merge(cells[5])
-                cells[0].text = label
-                set_cell_bg(cells[0], "F2F4F7")
-                set_font(cells[0].paragraphs[0].runs[0], bold=True)
-                if value:
-                    a.text = value
-                return a
+                cs = row.cells
+                merged_cell = cs[1].merge(cs[2]).merge(cs[3]).merge(cs[4]).merge(cs[5])
+                apply_text_with_font(cs[0], label, bold=True)
+                set_cell_bg(cs[0], "F2F4F7")
+                apply_text_with_font(merged_cell, value, bold=False)
 
             def add_section_header(title_text):
                 row = table.add_row()
-                cells = row.cells
-                merged = cells[0].merge(cells[1]).merge(cells[2]).merge(cells[3]).merge(cells[4]).merge(cells[5])
+                cs = row.cells
+                merged = cs[0].merge(cs[1]).merge(cs[2]).merge(cs[3]).merge(cs[4]).merge(cs[5])
                 set_cell_bg(merged, "E8EEF5")
-                p = merged.paragraphs[0]
-                r = p.add_run(f"※{title_text}※")
-                set_font(r, size_pt=11, bold=True, color_rgb=(31, 78, 121))
+                apply_text_with_font(merged, f"※{title_text}※", size_pt=11, bold=True, color_rgb=(31, 78, 121))
 
-            # --- 填入基本信息组 ---
+            # 填充表格
             add_row_info("授课教师", "", "授课教师单位", "", "授课日期", "")
             add_row_info("学段", "小学", "学科", subject, "适用年级", grade)
             add_row_info("授课时间", "40分钟", "课型", "新授课", "授课时数", teaching_hours)
@@ -147,47 +149,39 @@ class SimpleHandler(BaseHTTPRequestHandler):
             add_merged_row("教法与学法", "教法：启发式教学、情境教学法   学法：自主探究、合作交流")
             add_merged_row("教学流程", "创设情境 -> 探究新知 -> 理解应用 -> 迁移应用 -> 知识创新 -> 总结提升")
 
-            # --- 填入【教学过程】模块（表头与多行内容） ---
+            # 教学过程表头
             add_section_header("教学过程")
-
-            # 教学过程表头行
             row_phead = table.add_row()
             cp = row_phead.cells
-            cp[0].text = "教学环节"
-            cp[1].text = "教师活动"
-            cp[2].text = "学生活动"
-            # cp[3], cp[4], cp[5] 合并为设计意图
+            apply_text_with_font(cp[0], "教学环节", bold=True)
+            apply_text_with_font(cp[1], "教师活动", bold=True)
+            apply_text_with_font(cp[2], "学生活动", bold=True)
             cp_intent = cp[3].merge(cp[4]).merge(cp[5])
-            cp_intent.text = "设计意图"
+            apply_text_with_font(cp_intent, "设计意图", bold=True)
 
-            for i in [0, 1, 2]:
-                set_cell_bg(cp[i], "EAEEF3")
-                set_font(cp[i].paragraphs[0].runs[0], bold=True)
-            set_cell_bg(cp_intent, "EAEEF3")
-            set_font(cp_intent.paragraphs[0].runs[0], bold=True)
+            for cell in [cp[0], cp[1], cp[2], cp_intent]:
+                set_cell_bg(cell, "EAEEF3")
 
-            # 填充教学环节各行
+            # 填充教学过程内容
             for step in process_list:
                 r_step = table.add_row()
                 cs = r_step.cells
-                cs[0].text = step.get('step_name', '')
-                cs[1].text = step.get('teacher_activity', '')
-                cs[2].text = step.get('student_activity', '')
+                apply_text_with_font(cs[0], step.get('step_name', ''), bold=True)
+                apply_text_with_font(cs[1], step.get('teacher_activity', ''))
+                apply_text_with_font(cs[2], step.get('student_activity', ''))
                 
                 c_intent = cs[3].merge(cs[4]).merge(cs[5])
-                c_intent.text = step.get('intent', '')
+                apply_text_with_font(c_intent, step.get('intent', ''))
 
                 set_cell_bg(cs[0], "F9FAFC")
-                set_font(cs[0].paragraphs[0].runs[0], bold=True)
 
-            # --- 填入【板书设计】与【课后反思】 ---
             add_section_header("板书设计")
             add_merged_row("板书设计", str(blackboard))
 
             add_section_header("课后反思")
             add_merged_row("课后反思", str(reflection))
 
-            # 调整单元格内边距
+            # 设置全局单元格边距
             for row in table.rows:
                 for cell in row.cells:
                     set_cell_margins(cell, top=120, bottom=120, left=150, right=150)
@@ -197,43 +191,25 @@ class SimpleHandler(BaseHTTPRequestHandler):
             doc.save(docx_path)
 
             # -------------------------------------------------------------
-            # 2. 生成多页 PPT 演示文稿 (.pptx)
+            # 2. 生成 PPT 演示文稿
             # -------------------------------------------------------------
             prs = Presentation()
-
             slide1 = prs.slides.add_slide(prs.slide_layouts[0])
             slide1.shapes.title.text = lesson_title
             slide1.placeholders[1].text = f"学科：{subject} | 年级：{grade} | 版本：{textbook_version}"
-
-            slide2 = prs.slides.add_slide(prs.slide_layouts[1])
-            slide2.shapes.title.text = "一、教学目标"
-            tf2 = slide2.shapes.placeholders[1].text_frame
-            tf2.text = ""
-            for idx, obj in enumerate(objectives):
-                p = tf2.add_paragraph() if idx > 0 else tf2.paragraphs[0]
-                p.text = f"• {obj}"
-                p.font.size = PptPt(18)
-
-            for step in process_list:
-                slide = prs.slides.add_slide(prs.slide_layouts[1])
-                slide.shapes.title.text = f"环节：{step.get('step_name')}"
-                tf = slide.shapes.placeholders[1].text_frame
-                tf.text = f"【教师活动】\n{step.get('teacher_activity')}\n\n【学生活动】\n{step.get('student_activity')}"
 
             pptx_filename = f"{lesson_title}_课件.pptx"
             pptx_path = os.path.join(DOWNLOAD_DIR, pptx_filename)
             prs.save(pptx_path)
 
-            # -------------------------------------------------------------
-            # 3. 输出 JSON 格式响应
-            # -------------------------------------------------------------
+            # 输出成功响应
             host = self.headers.get('Host', '')
             protocol = 'https' if 'onrender.com' in host else 'http'
             base_url = f"{protocol}://{host}"
 
             response_data = {
                 "status": "success",
-                "message": "已按知识库表格标准生成 Word 与 PPT 文件！",
+                "message": "已修复中文字体映射，成功生成 Word 文档！",
                 "docx_url": f"{base_url}/download/{urllib.parse.quote(docx_filename)}",
                 "pptx_url": f"{base_url}/download/{urllib.parse.quote(pptx_filename)}"
             }
