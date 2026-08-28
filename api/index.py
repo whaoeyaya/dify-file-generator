@@ -9,27 +9,35 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from pptx import Presentation
-from pptx.util import Inches as PptInches, Pt as PptPt
+from pptx.util import Pt as PptPt
+from pptx.dml.color import RGBColor as PptRGBColor
 
 DOWNLOAD_DIR = os.path.join(os.getcwd(), 'static')
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # -------------------------------------------------------------
-# 核心修复函数：彻底解决 Word 中文显示为方框/乱码问题
+# 自动定位 PPT 模板路径 (优先检查 api/ 目录，再检查根目录)
+# -------------------------------------------------------------
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+
+TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.pptx')
+if not os.path.exists(TEMPLATE_PATH):
+    TEMPLATE_PATH = os.path.join(PARENT_DIR, 'template.pptx')
+
+# -------------------------------------------------------------
+# Word 修复字体函数：彻底解决 Word 中文显示为方框/乱码问题
 # -------------------------------------------------------------
 def apply_text_with_font(paragraph_or_cell, text, font_name='微软雅黑', size_pt=10.5, bold=False, color_rgb=(51, 51, 51)):
-    # 获取段落对象
     p = paragraph_or_cell.paragraphs[0] if hasattr(paragraph_or_cell, 'paragraphs') else paragraph_or_cell
-    p.text = "" # 清空默认文本
+    p.text = "" 
     run = p.add_run(text)
     
-    # 设置基础字体属性
     run.font.name = font_name
     run.font.size = Pt(size_pt)
     run.bold = bold
     run.font.color.rgb = RGBColor(*color_rgb)
     
-    # 底层强制绑定中文字体（解决方框乱码的关键！）
     rPr = run._r.get_or_add_rPr()
     rFonts = OxmlElement('w:rFonts')
     rFonts.set(qn('w:ascii'), font_name)
@@ -52,6 +60,14 @@ def set_cell_margins(cell, top=120, bottom=120, left=150, right=150):
         node.set(qn('w:type'), 'dxa')
         tcMar.append(node)
     tcPr.append(tcMar)
+
+# PPT 页面标题设置辅助函数
+def add_ppt_title(slide, text):
+    if slide.shapes.title:
+        slide.shapes.title.text = text
+        p = slide.shapes.title.text_frame.paragraphs[0]
+        p.font.name = '微软雅黑'
+        p.font.bold = True
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -88,11 +104,16 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 {"step_name": "归纳总结 作业设计 素养发展", "teacher_activity": "引导课堂总结，布置基础与实践分层作业。", "student_activity": "总结收获，记录课后作业。", "intent": "内化知识，延伸课外实践。"}
             ]
 
+            homework_list = teaching_design.get('homework') or data.get('homework') or [
+                '基础题：完成教材配套练习册对应习题。',
+                '拓展题：调查家里近3个月的水电费支出并绘制复式条形统计图。'
+            ]
+
             blackboard = teaching_design.get('blackboard_design') or data.get('blackboard_design') or "主板书：复式条形统计图（含标题、图例、直条标注）"
             reflection = teaching_design.get('reflection') or "本节课学生对图例的认知清晰，绘制环节需进一步加强工具使用的指导。"
 
             # -------------------------------------------------------------
-            # 1. 生成标准的 Word 格式文档
+            # 1. 生成 Word 教学设计表格 (.docx)
             # -------------------------------------------------------------
             doc = Document()
             for s in doc.sections:
@@ -101,7 +122,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 s.left_margin = Inches(0.8)
                 s.right_margin = Inches(0.8)
 
-            # 大标题
             p_head = doc.add_paragraph()
             p_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
             apply_text_with_font(p_head, f"《{lesson_title}》教学设计", size_pt=18, bold=True, color_rgb=(31, 78, 121))
@@ -134,7 +154,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 set_cell_bg(merged, "E8EEF5")
                 apply_text_with_font(merged, f"※{title_text}※", size_pt=11, bold=True, color_rgb=(31, 78, 121))
 
-            # 填充表格
             add_row_info("授课教师", "", "授课教师单位", "", "授课日期", "")
             add_row_info("学段", "小学", "学科", subject, "适用年级", grade)
             add_row_info("授课时间", "40分钟", "课型", "新授课", "授课时数", teaching_hours)
@@ -149,7 +168,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             add_merged_row("教法与学法", "教法：启发式教学、情境教学法   学法：自主探究、合作交流")
             add_merged_row("教学流程", "创设情境 -> 探究新知 -> 理解应用 -> 迁移应用 -> 知识创新 -> 总结提升")
 
-            # 教学过程表头
             add_section_header("教学过程")
             row_phead = table.add_row()
             cp = row_phead.cells
@@ -162,7 +180,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             for cell in [cp[0], cp[1], cp[2], cp_intent]:
                 set_cell_bg(cell, "EAEEF3")
 
-            # 填充教学过程内容
             for step in process_list:
                 r_step = table.add_row()
                 cs = r_step.cells
@@ -181,7 +198,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             add_section_header("课后反思")
             add_merged_row("课后反思", str(reflection))
 
-            # 设置全局单元格边距
             for row in table.rows:
                 for cell in row.cells:
                     set_cell_margins(cell, top=120, bottom=120, left=150, right=150)
@@ -191,25 +207,110 @@ class SimpleHandler(BaseHTTPRequestHandler):
             doc.save(docx_path)
 
             # -------------------------------------------------------------
-            # 2. 生成 PPT 演示文稿
+            # 2. 基于 GitHub 模板加载并生成多页完整 PPT
             # -------------------------------------------------------------
-            prs = Presentation()
-            slide1 = prs.slides.add_slide(prs.slide_layouts[0])
-            slide1.shapes.title.text = lesson_title
-            slide1.placeholders[1].text = f"学科：{subject} | 年级：{grade} | 版本：{textbook_version}"
+            if os.path.exists(TEMPLATE_PATH):
+                prs = Presentation(TEMPLATE_PATH)
+            else:
+                prs = Presentation()
+
+            layout_title = prs.slide_layouts[0] if len(prs.slide_layouts) > 0 else prs.slide_layouts[0]
+            layout_content = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else prs.slide_layouts[0]
+
+            # Slide 1: 封面页
+            slide1 = prs.slides.add_slide(layout_title)
+            if slide1.shapes.title:
+                slide1.shapes.title.text = lesson_title
+            if len(slide1.placeholders) > 1:
+                slide1.placeholders[1].text = f"学科：{subject}   |   年级：{grade}   |   版本：{textbook_version}"
+
+            # Slide 2: 教学目标页
+            slide2 = prs.slides.add_slide(layout_content)
+            add_ppt_title(slide2, "一、教学目标")
+            if len(slide2.placeholders) > 1:
+                tf2 = slide2.placeholders[1].text_frame
+                tf2.text = ""
+                for idx, obj in enumerate(objectives):
+                    p = tf2.add_paragraph() if idx > 0 else tf2.paragraphs[0]
+                    p.text = f"•  {obj}"
+                    p.font.name = '微软雅黑'
+                    p.font.size = PptPt(18)
+                    p.space_after = PptPt(12)
+
+            # Slide 3 ~ N: 教学过程各环节（每环节生成独立一页 PPT）
+            for step in process_list:
+                slide = prs.slides.add_slide(layout_content)
+                add_ppt_title(slide, f"教学环节：{step.get('step_name', '探究流程')}")
+                if len(slide.placeholders) > 1:
+                    tf = slide.placeholders[1].text_frame
+                    tf.text = ""
+
+                    p1 = tf.paragraphs[0]
+                    p1.text = "【教师活动】"
+                    p1.font.name = '微软雅黑'
+                    p1.font.size = PptPt(18)
+                    p1.font.bold = True
+                    p1.font.color.rgb = PptRGBColor(41, 128, 185)
+
+                    p1_sub = tf.add_paragraph()
+                    p1_sub.text = f"{step.get('teacher_activity', '')}"
+                    p1_sub.font.name = '微软雅黑'
+                    p1_sub.font.size = PptPt(16)
+                    p1_sub.space_after = PptPt(16)
+
+                    p2 = tf.add_paragraph()
+                    p2.text = "【学生活动】"
+                    p2.font.name = '微软雅黑'
+                    p2.font.size = PptPt(18)
+                    p2.font.bold = True
+                    p2.font.color.rgb = PptRGBColor(39, 174, 96)
+
+                    p2_sub = tf.add_paragraph()
+                    p2_sub.text = f"{step.get('student_activity', '')}"
+                    p2_sub.font.name = '微软雅黑'
+                    p2_sub.font.size = PptPt(16)
+
+            # Slide N+1: 板书设计页
+            slide_bb = prs.slides.add_slide(layout_content)
+            add_ppt_title(slide_bb, "板书设计")
+            if len(slide_bb.placeholders) > 1:
+                tf_bb = slide_bb.placeholders[1].text_frame
+                tf_bb.text = ""
+                for idx, line in enumerate(str(blackboard).split('\n')):
+                    if not line.strip(): continue
+                    p = tf_bb.add_paragraph() if idx > 0 else tf_bb.paragraphs[0]
+                    p.text = line.strip()
+                    p.font.name = '微软雅黑'
+                    p.font.size = PptPt(18)
+                    p.space_after = PptPt(10)
+
+            # Slide N+2: 课后作业页
+            slide_hw = prs.slides.add_slide(layout_content)
+            add_ppt_title(slide_hw, "课后作业")
+            if len(slide_hw.placeholders) > 1:
+                tf_hw = slide_hw.placeholders[1].text_frame
+                tf_hw.text = ""
+                for idx, hw in enumerate(homework_list):
+                    p = tf_hw.add_paragraph() if idx > 0 else tf_hw.paragraphs[0]
+                    p.text = f"•  {hw}"
+                    p.font.name = '微软雅黑'
+                    p.font.size = PptPt(18)
+                    p.space_after = PptPt(14)
 
             pptx_filename = f"{lesson_title}_课件.pptx"
             pptx_path = os.path.join(DOWNLOAD_DIR, pptx_filename)
             prs.save(pptx_path)
 
-            # 输出成功响应
+            # -------------------------------------------------------------
+            # 3. 输出 Json 响应
+            # -------------------------------------------------------------
             host = self.headers.get('Host', '')
             protocol = 'https' if 'onrender.com' in host else 'http'
             base_url = f"{protocol}://{host}"
 
             response_data = {
                 "status": "success",
-                "message": "已修复中文字体映射，成功生成 Word 文档！",
+                "message": "Word 与多页模板 PPT 课件已生成！",
                 "docx_url": f"{base_url}/download/{urllib.parse.quote(docx_filename)}",
                 "pptx_url": f"{base_url}/download/{urllib.parse.quote(pptx_filename)}"
             }
