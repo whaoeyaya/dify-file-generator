@@ -211,11 +211,19 @@ class SimpleHandler(BaseHTTPRequestHandler):
             # -------------------------------------------------------------
             if os.path.exists(TEMPLATE_PATH):
                 prs = Presentation(TEMPLATE_PATH)
+                
+                # 【关键修复】：删除模板原有的残余示例幻灯片，避免生成内容排在后面
+                rId_list = [slide.rId for slide in prs.slides._sldIdLst]
+                for rId in rId_list:
+                    prs.part.drop_rel(rId)
+                    del prs.slides._sldIdLst[0]
             else:
                 prs = Presentation()
 
-            layout_title = prs.slide_layouts[0] if len(prs.slide_layouts) > 0 else prs.slide_layouts[0]
-            layout_content = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else prs.slide_layouts[0]
+            # 灵活获取模板的版式（0 为封面版式，1 为正文内容版式）
+            layouts_count = len(prs.slide_layouts)
+            layout_title = prs.slide_layouts[0] if layouts_count > 0 else prs.slide_layouts[0]
+            layout_content = prs.slide_layouts[1] if layouts_count > 1 else prs.slide_layouts[0]
 
             # Slide 1: 封面页
             slide1 = prs.slides.add_slide(layout_title)
