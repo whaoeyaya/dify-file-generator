@@ -61,7 +61,6 @@ def set_cell_margins(cell, top=120, bottom=120, left=150, right=150):
         tcMar.append(node)
     tcPr.append(tcMar)
 
-# PPT 页面标题设置辅助函数
 def add_ppt_title(slide, text):
     if slide.shapes.title:
         slide.shapes.title.text = text
@@ -80,37 +79,45 @@ class SimpleHandler(BaseHTTPRequestHandler):
             except Exception:
                 data = {}
 
+            # 兼容嵌套格式与平铺格式
             summary = data.get('resource_summary', {})
             teaching_design = data.get('teaching_design', {})
 
             lesson_title = summary.get('lesson_title') or data.get('lesson_title') or '复式条形统计图'
             subject = summary.get('subject') or data.get('subject') or '数学'
-            grade = summary.get('grade') or data.get('grade') or '五年级'
+            grade = summary.get('grade') or data.get('grade') or '四年级'
+            location = summary.get('location') or data.get('location') or '广西来宾市兴宾区'
             teaching_hours = summary.get('teaching_hours') or data.get('teaching_hours') or '1课时'
             textbook_version = summary.get('textbook_version') or data.get('textbook_version') or '人教版'
 
             objectives = teaching_design.get('teaching_objectives') or data.get('teaching_objectives') or [
-                '认识复式条形统计图，理解其实际应用价值。',
-                '掌握复式条形统计图的绘制方法与步骤，能正确解读图表数据。',
-                '经历数据收集、整理与分析全过程，提高数据分析观念。'
+                '知识与技能：结合来宾市双产业发展数据，掌握复式条形统计图的绘制方法。',
+                '过程与方法：经历数据整理分析过程，体会统计在实际生活中的决策应用。',
+                '本土素养：通过甘蔗与桑蚕产量分析，增强对家乡产业发展的自豪感与认同感。'
             ]
 
             process_list = teaching_design.get('teaching_process') or data.get('teaching_process') or [
-                {"step_name": "创设情境", "teacher_activity": "出示单式条形统计图，提问如何更直观对比两组数据？", "student_activity": "观察思考，提出合并图表的想法。", "intent": "激发学习兴趣与对比需求。"},
-                {"step_name": "探究归纳建构新知", "teacher_activity": "展示复式条形统计图，引导观察图例作用及直条绘制规则。", "student_activity": "讨论图例必要性，尝试绘制并总结规则。", "intent": "建立复式条形统计图概念。"},
-                {"step_name": "知识的理解应用", "teacher_activity": "指导完成基础例题绘制并回答分析问题。", "student_activity": "独立完成统计图补充与数据解答。", "intent": "巩固图表绘制与读取能力。"},
-                {"step_name": "知识的迁移应用", "teacher_activity": "提供本土/生活实际数据（如班级图书借阅情况）。", "student_activity": "分组分析趋势并做出推断。", "intent": "升华数据分析观念与应用能力。"},
-                {"step_name": "知识的创新", "teacher_activity": "引导思考复式折线与复式条形图的异同与选用场景。", "student_activity": "展开讨论，发散思维。", "intent": "拓展知识结构与综合素养。"},
-                {"step_name": "归纳总结 作业设计 素养发展", "teacher_activity": "引导课堂总结，布置基础与实践分层作业。", "student_activity": "总结收获，记录课后作业。", "intent": "内化知识，延伸课外实践。"}
+                {"step_name": "创设情境", "teacher_activity": "展示来宾城厢镇与凤凰镇的甘蔗产量单式图，提问如何直观对比？", "student_activity": "观察思考，提出合并统计图的需求。", "intent": "触发本土认知冲突，引入复式概念。"},
+                {"step_name": "探究新知", "teacher_activity": "演示两镇“甘蔗与蚕茧”双产业复式统计图，解析图例与直条规范。", "student_activity": "合作讨论图例作用，归纳绘制要点。", "intent": "建立复式条形统计图表征模型。"},
+                {"step_name": "理解应用", "teacher_activity": "出示良江镇与小平阳镇农业数据，指导补全统计图。", "student_activity": "独立完成绘制，回答问题链。", "intent": "巩固图例绘制与基础解读能力。"},
+                {"step_name": "迁移应用", "teacher_activity": "分析近3年来宾市蔗糖加工量的变化趋势。", "student_activity": "分组讨论并预测下季产量，撰写简短分析报告。", "intent": "提升高阶数据分析与推理素养。"},
+                {"step_name": "创新升华", "teacher_activity": "引导讨论复式条形图与复式折线图在农作物生长监测中的选用。", "student_activity": "辩论异同，提出本土智慧农业表达方案。", "intent": "激发跨学科创新思维。"}
+            ]
+
+            ppt_slides_data = data.get('ppt_slides') or [
+                {"title": "本土情境导入", "points": "对比城厢镇与凤凰镇甘蔗产量", "image_tip": "来宾蔗海风光与甘蔗运输车图", "interactive": "提问：如何在一个图里对比两个镇？"},
+                {"title": "新知探究：认识图例", "points": "复式条形统计图的两个核心：图例与双直条", "image_tip": "标注图例和不同颜色直条的统计图演示", "interactive": "同桌讨论：为什么必须有图例？"},
+                {"title": "动手绘制与实践", "points": "根据良江镇蚕茧与甘蔗数据补充图表", "image_tip": "未完成的统计图模板卡", "interactive": "学生动手绘制，拍照展示点评"},
+                {"title": "数据分析与产业预测", "points": "根据图形判断哪种农作物增长更快", "image_tip": "来宾糖业加工产业链示意图", "interactive": "小组讨论：为农户提出种植建议"}
             ]
 
             homework_list = teaching_design.get('homework') or data.get('homework') or [
-                '基础题：完成教材配套练习册对应习题。',
-                '拓展题：调查家里近3个月的水电费支出并绘制复式条形统计图。'
+                '基础作业：完成教材配套练习册对应习题。',
+                '本土迁移作业：调查自家近半年的水费与电费支出，绘制复式条形统计图并提出节约建议。'
             ]
 
-            blackboard = teaching_design.get('blackboard_design') or data.get('blackboard_design') or "主板书：复式条形统计图（含标题、图例、直条标注）"
-            reflection = teaching_design.get('reflection') or "本节课学生对图例的认知清晰，绘制环节需进一步加强工具使用的指导。"
+            blackboard = teaching_design.get('blackboard_design') or data.get('blackboard_design') or "主板书：复式条形统计图\n1. 标题\n2. 图例（区分不同类别）\n3. 横轴与纵轴\n4. 双直条绘制（注意间距）"
+            reflection = teaching_design.get('reflection') or "结合本土真实农产品数据显著提升了学生的参与度，后半段图例绘制细节仍需巡视强化指导。"
 
             # -------------------------------------------------------------
             # 1. 生成 Word 教学设计表格 (.docx)
@@ -124,7 +131,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             p_head = doc.add_paragraph()
             p_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            apply_text_with_font(p_head, f"《{lesson_title}》教学设计", size_pt=18, bold=True, color_rgb=(31, 78, 121))
+            apply_text_with_font(p_head, f"《{lesson_title}》本土化教学设计", size_pt=18, bold=True, color_rgb=(31, 78, 121))
 
             table = doc.add_table(rows=0, cols=6)
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -152,23 +159,20 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 cs = row.cells
                 merged = cs[0].merge(cs[1]).merge(cs[2]).merge(cs[3]).merge(cs[4]).merge(cs[5])
                 set_cell_bg(merged, "E8EEF5")
-                apply_text_with_font(merged, f"※{title_text}※", size_pt=11, bold=True, color_rgb=(31, 78, 121))
+                apply_text_with_font(merged, f"※ {title_text} ※", size_pt=11, bold=True, color_rgb=(31, 78, 121))
 
-            add_row_info("授课教师", "", "授课教师单位", "", "授课日期", "")
+            add_row_info("授课教师", "", "所属县域/学校", location, "授课日期", "")
             add_row_info("学段", "小学", "学科", subject, "适用年级", grade)
             add_row_info("授课时间", "40分钟", "课型", "新授课", "授课时数", teaching_hours)
 
-            add_merged_row("课题", lesson_title)
-            add_merged_row("教材分析", f"本课属于{textbook_version}教材，重点在于让学生掌握表达多组数据的方法。")
-            add_merged_row("学情分析", "学生已掌握单式条形统计图的绘制，具备基础的数据解读能力。")
+            add_merged_row("课题名称", lesson_title)
+            add_merged_row("教材及版本", f"{textbook_version} 结合区域特色素材重构")
             
-            obj_str = "\n".join([f"{i+1}. {o}" for i, o in enumerate(objectives)])
+            obj_str = "\n".join([f"{o}" if o.startswith(('1','2','3','知识','过程','本土')) else f"• {o}" for o in objectives])
             add_merged_row("教学目标", obj_str)
-            add_merged_row("教学重难点", "教学重点：理解复式条形统计图特点与绘制\n教学难点：图例的规范使用与数据分析")
-            add_merged_row("教法与学法", "教法：启发式教学、情境教学法   学法：自主探究、合作交流")
-            add_merged_row("教学流程", "创设情境 -> 探究新知 -> 理解应用 -> 迁移应用 -> 知识创新 -> 总结提升")
+            add_merged_row("教学重难点", "教学重点：理解复式条形统计图特点，掌握图例规范绘制。\n教学难点：结合真实数据进行合理趋势推断与决策分析。")
 
-            add_section_header("教学过程")
+            add_section_header("五环节教学流程")
             row_phead = table.add_row()
             cp = row_phead.cells
             apply_text_with_font(cp[0], "教学环节", bold=True)
@@ -189,30 +193,31 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 
                 c_intent = cs[3].merge(cs[4]).merge(cs[5])
                 apply_text_with_font(c_intent, step.get('intent', ''))
-
                 set_cell_bg(cs[0], "F9FAFC")
 
             add_section_header("板书设计")
             add_merged_row("板书设计", str(blackboard))
 
-            add_section_header("课后反思")
+            add_section_header("课后作业与拓展")
+            hw_str = "\n".join([f"• {hw}" for hw in homework_list])
+            add_merged_row("分层作业", hw_str)
+
+            add_section_header("教学反思")
             add_merged_row("课后反思", str(reflection))
 
             for row in table.rows:
                 for cell in row.cells:
                     set_cell_margins(cell, top=120, bottom=120, left=150, right=150)
 
-            docx_filename = f"{lesson_title}_教学设计表.docx"
+            docx_filename = f"{lesson_title}_本土教学设计表.docx"
             docx_path = os.path.join(DOWNLOAD_DIR, docx_filename)
             doc.save(docx_path)
 
             # -------------------------------------------------------------
-            # 2. 基于 GitHub 模板加载并生成多页完整 PPT
+            # 2. 基于模板生成多页完整 PPT 课件 (.pptx)
             # -------------------------------------------------------------
             if os.path.exists(TEMPLATE_PATH):
                 prs = Presentation(TEMPLATE_PATH)
-                
-                # 【关键修复】：删除模板原有的残余示例幻灯片，避免生成内容排在后面
                 rId_list = [slide.rId for slide in prs.slides._sldIdLst]
                 for rId in rId_list:
                     prs.part.drop_rel(rId)
@@ -220,7 +225,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
             else:
                 prs = Presentation()
 
-            # 灵活获取模板的版式（0 为封面版式，1 为正文内容版式）
             layouts_count = len(prs.slide_layouts)
             layout_title = prs.slide_layouts[0] if layouts_count > 0 else prs.slide_layouts[0]
             layout_content = prs.slide_layouts[1] if layouts_count > 1 else prs.slide_layouts[0]
@@ -230,7 +234,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
             if slide1.shapes.title:
                 slide1.shapes.title.text = lesson_title
             if len(slide1.placeholders) > 1:
-                slide1.placeholders[1].text = f"学科：{subject}   |   年级：{grade}   |   版本：{textbook_version}"
+                slide1.placeholders[1].text = f"学科：{subject}   |   年级：{grade}   |   区域：{location}"
 
             # Slide 2: 教学目标页
             slide2 = prs.slides.add_slide(layout_content)
@@ -245,56 +249,57 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     p.font.size = PptPt(18)
                     p.space_after = PptPt(12)
 
-            # Slide 3 ~ N: 教学过程各环节（每环节生成独立一页 PPT）
-            for step in process_list:
+            # Slide 3~N: 动态生成的 PPT 核心文案页
+            for page in ppt_slides_data:
                 slide = prs.slides.add_slide(layout_content)
-                add_ppt_title(slide, f"教学环节：{step.get('step_name', '探究流程')}")
+                add_ppt_title(slide, page.get('title', '课堂探究'))
                 if len(slide.placeholders) > 1:
                     tf = slide.placeholders[1].text_frame
                     tf.text = ""
 
                     p1 = tf.paragraphs[0]
-                    p1.text = "【教师活动】"
+                    p1.text = "【核心要点】"
                     p1.font.name = '微软雅黑'
                     p1.font.size = PptPt(18)
                     p1.font.bold = True
                     p1.font.color.rgb = PptRGBColor(41, 128, 185)
 
                     p1_sub = tf.add_paragraph()
-                    p1_sub.text = f"{step.get('teacher_activity', '')}"
+                    p1_sub.text = page.get('points', '')
                     p1_sub.font.name = '微软雅黑'
                     p1_sub.font.size = PptPt(16)
-                    p1_sub.space_after = PptPt(16)
+                    p1_sub.space_after = PptPt(14)
 
-                    p2 = tf.add_paragraph()
-                    p2.text = "【学生活动】"
-                    p2.font.name = '微软雅黑'
-                    p2.font.size = PptPt(18)
-                    p2.font.bold = True
-                    p2.font.color.rgb = PptRGBColor(39, 174, 96)
+                    if 'image_tip' in page:
+                        p2 = tf.add_paragraph()
+                        p2.text = "【配图/媒体建议】"
+                        p2.font.name = '微软雅黑'
+                        p2.font.size = PptPt(18)
+                        p2.font.bold = True
+                        p2.font.color.rgb = PptRGBColor(39, 174, 96)
 
-                    p2_sub = tf.add_paragraph()
-                    p2_sub.text = f"{step.get('student_activity', '')}"
-                    p2_sub.font.name = '微软雅黑'
-                    p2_sub.font.size = PptPt(16)
+                        p2_sub = tf.add_paragraph()
+                        p2_sub.text = page.get('image_tip', '')
+                        p2_sub.font.name = '微软雅黑'
+                        p2_sub.font.size = PptPt(16)
+                        p2_sub.space_after = PptPt(14)
 
-            # Slide N+1: 板书设计页
-            slide_bb = prs.slides.add_slide(layout_content)
-            add_ppt_title(slide_bb, "板书设计")
-            if len(slide_bb.placeholders) > 1:
-                tf_bb = slide_bb.placeholders[1].text_frame
-                tf_bb.text = ""
-                for idx, line in enumerate(str(blackboard).split('\n')):
-                    if not line.strip(): continue
-                    p = tf_bb.add_paragraph() if idx > 0 else tf_bb.paragraphs[0]
-                    p.text = line.strip()
-                    p.font.name = '微软雅黑'
-                    p.font.size = PptPt(18)
-                    p.space_after = PptPt(10)
+                    if 'interactive' in page:
+                        p3 = tf.add_paragraph()
+                        p3.text = "【互动提示】"
+                        p3.font.name = '微软雅黑'
+                        p3.font.size = PptPt(18)
+                        p3.font.bold = True
+                        p3.font.color.rgb = PptRGBColor(211, 84, 0)
 
-            # Slide N+2: 课后作业页
+                        p3_sub = tf.add_paragraph()
+                        p3_sub.text = page.get('interactive', '')
+                        p3_sub.font.name = '微软雅黑'
+                        p3_sub.font.size = PptPt(16)
+
+            # 结尾页: 课后作业页
             slide_hw = prs.slides.add_slide(layout_content)
-            add_ppt_title(slide_hw, "课后作业")
+            add_ppt_title(slide_hw, "课后作业与实践")
             if len(slide_hw.placeholders) > 1:
                 tf_hw = slide_hw.placeholders[1].text_frame
                 tf_hw.text = ""
@@ -318,7 +323,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
             response_data = {
                 "status": "success",
-                "message": "Word 与多页模板 PPT 课件已生成！",
+                "message": "Word 与多页模板 PPT 课件已成功生成！",
                 "docx_url": f"{base_url}/download/{urllib.parse.quote(docx_filename)}",
                 "pptx_url": f"{base_url}/download/{urllib.parse.quote(pptx_filename)}"
             }
@@ -332,6 +337,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
 
@@ -345,6 +351,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header('Content-Type', mime_type)
                 self.send_header('Content-Disposition', f"attachment; filename*=UTF-8''{urllib.parse.quote(filename)}")
+                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 with open(file_path, 'rb') as f:
                     self.wfile.write(f.read())
