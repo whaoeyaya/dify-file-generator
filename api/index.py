@@ -167,16 +167,23 @@ class SimpleHandler(BaseHTTPRequestHandler):
         """处理文件下载"""
         parsed_path = urllib.parse.urlparse(self.path).path
         if parsed_path.startswith('/static/'):
-            filename = os.path.basename(parsed_path)
-            # URL 解码处理中文文件名
-            decoded_filename = urllib.parse.unquote(filename)
+            # 1. 提取文件名并进行 URL 解码 (将 %E5%A4%A7%E7%BA%B2 解转回真实中文)
+            raw_filename = parsed_path.replace('/static/', '')
+            decoded_filename = urllib.parse.unquote(raw_filename)
+            
             file_path = os.path.join(DOWNLOAD_DIR, decoded_filename)
             
+            # 调试日志：方便在 Render Logs 查看实际找的是什么文件
+            print(f"[DEBUG GET] Request file: {decoded_filename}")
+            print(f"[DEBUG GET] Full path: {file_path}")
+            print(f"[DEBUG GET] File exists? {os.path.exists(file_path)}")
+
             if os.path.exists(file_path) and os.path.isfile(file_path):
                 self.send_response(200)
                 mime_type, _ = mimetypes.guess_type(file_path)
                 self.send_header('Content-Type', mime_type or 'application/octet-stream')
-                self.send_header('Content-Disposition', f'attachment; filename="{urllib.parse.quote(decoded_filename)}"')
+                # 兼容中文下载名的 Header 标准写法
+                self.send_header('Content-Disposition', f"attachment; filename*=UTF-8''{urllib.parse.quote(decoded_filename)}")
                 self.send_header('Content-Length', str(os.path.getsize(file_path)))
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
@@ -184,6 +191,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f.read())
                 return
 
+        # 找不到文件时返回 404
         self.send_response(404)
         self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.end_headers()
@@ -191,42 +199,60 @@ class SimpleHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         """接收 Dify 请求并生成文档"""
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        req_json = json.loads(post_data.decode('utf-8'))
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            req_json = json.loads(post_data.decode('utf-8'))
 
-        # 解析数据
-        model_output = req_json.get('model_output', req_json)
-        basic_info = model_output.get('basic_info', {})
-        ppt_data = model_output.get('ppt_data', {})
-        word_data = model_output.get('word_data', {})
+            model_output = req_json.get('model_output', {})
+            if isinstance(model_output, str):
+                clean_str = model_output.replace("```json", "").replace("```", "").strip()
+                model_output = json.loads(clean_str)
 
-        lesson_title = basic_info.get('lesson_title', '教学设计')
-        
-        ppt_filename = f"{lesson_title}_教学课件.pptx"
-        word_filename = f"{lesson_title}_教学设计.docx"
-        
-        ppt_path = os.path.join(DOWNLOAD_DIR, ppt_filename)
-        word_path = os.path.join(DOWNLOAD_DIR, word_filename)
+            basic_info = model_output.get('basic_info', {})
+            ppt_data = model_output.get('ppt_data', {})
+            word_data = model_output.get('word_data', {})
 
-        # 生成文件
-        generate_ppt_from_template(ppt_data, basic_info, ppt_path)
-        generate_word_lesson_plan(word_data, basic_info, word_path)
+            # 过滤掉文件名中的非法字符 (如 《》 / \ : * ? " < > |)
+            raw_title = req_json.get('lesson_title') or basic_info.get('lesson_title') or '教学设计'
+            clean_title = "".join([c for c in raw_title if c not in r'\/:*?"<>|《》'])
 
-        # 返回文件外网下载链接
-        domain = "https://dify-file-generator.onrender.com"
-        response_data = {
-            "status": "success",
-            "ppt_url": f"{domain}/static/{urllib.parse.quote(ppt_filename)}",
-            "word_url": f"{domain}/static/{urllib.parse.quote(word_filename)}"
-        }
-        
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(response_data).encode('utf-8'))
+            ppt_filename = f"{clean_title}_教学课件.pptx"
+            word_filename = f"{clean_title}_教学设计.docx"
+            
+            ppt_path = os.path.join(DOWNLOAD_DIR, ppt_filename)
+            word_path = os.path.join(DOWNLOAD_DIR, word_filename)
 
+            # 生成文件
+            generate_ppt_from_template(ppt_data, basic_info, ppt_path)
+            generate_word_lesson_plan(word_data, basic_info, word_path)
+
+            print(f"[DEBUG POST] Generated Word at: {word_path}, exists: {os.path.exists(word_path)}")
+            print(f"[DEBUG POST] Generated PPT at: {ppt_path}, exists: {os.path.exists(ppt_path)}")
+
+            domain = "https://dify-file-generator.onrender.com"
+            response_data = {
+                "status": "success",
+                "ppt_url": f"{domain}/static/{urllib.parse.quote(ppt_filename)}",
+                "word_url": f"{domain}/static/{urllib.parse.quote(word_filename)}"
+            }
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(response_data).encode('utf-8'))
+
+        except Exception as e:
+            print(f"[ERROR POST] {str(e)}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode('utf-8'))
+
+# ---------------------------------------------------------------------------
+# 4. 启动 Server 逻辑
+# ---------------------------------------------------------------------------
 def run(server_class=HTTPServer, handler_class=SimpleHandler, port=10000):
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
