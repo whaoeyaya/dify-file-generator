@@ -58,26 +58,30 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
 # ---------------------------------------------------------------------------
 # 2. Word 教学设计生成逻辑 (基于现有模板填充)
 # ---------------------------------------------------------------------------
-
-def parse_dict_or_str(data, keys, default_text=""):
-    """辅助工具：智能提取字典字段或返回原始文本"""
+def safe_json_parse(data):
+    """确保传入的数据转为 dict 格式"""
     if isinstance(data, dict):
-        res = [str(data.get(k, "")).strip() for k in keys if data.get(k)]
-        if res:
-            return "\n".join(res)
-    elif isinstance(data, str) and data.strip():
-        return data.strip()
-    return default_text
+        return data
+    if isinstance(data, str) and data.strip():
+        try:
+            return json.loads(data)
+        except Exception:
+            return {}
+    return {}
 
 def generate_word_lesson_plan(word_data, basic_info, output_path):
     try:
-        # 1. 优先加载你的原始 template.docx 模板
+        # 1. 安全转码，防止传入的是 JSON 字符串
+        basic_info = safe_json_parse(basic_info)
+        word_data = safe_json_parse(word_data)
+
+        # 2. 优先加载原始 template.docx 模板
         if os.path.exists(WORD_TEMPLATE_PATH):
             doc = Document(WORD_TEMPLATE_PATH)
         else:
             doc = Document()
 
-        lesson_title = basic_info.get('lesson_title') or word_data.get('lesson_title', '教学设计')
+        lesson_title = basic_info.get('lesson_title') or word_data.get('lesson_title') or '教学设计'
 
         # A. 替换文档主标题
         for p in doc.paragraphs:
@@ -91,105 +95,113 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
             table = doc.tables[0]
 
             for idx, row in enumerate(table.rows):
-                # 获取整行不带空白的全部文本，用于鲁棒定位
                 row_text = "".join([c.text.strip() for c in row.cells])
 
                 # -------------------------------------------------------------
-                # 1. 基础信息行填充（定位单元格右侧）
+                # 1. 基础信息行填充
                 # -------------------------------------------------------------
                 if any(k in row_text for k in ["授课教师", "学段", "授课时间"]):
                     for c_idx, cell in enumerate(row.cells):
                         cell_txt = cell.text.strip()
                         if cell_txt == "授课教师" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_name", ""))
+                            cell_val = basic_info.get("teacher_name") or "教师"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "授课教师单位" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_unit", ""))
+                            cell_val = basic_info.get("teacher_unit") or "实验小学"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "授课日期" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_date", ""))
+                            cell_val = basic_info.get("lesson_date") or "2026年"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "学段" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("stage", ""))
+                            cell_val = basic_info.get("stage") or "小学"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "学科" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("subject", ""))
+                            cell_val = basic_info.get("subject") or "数学"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "适用年级" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("grade", ""))
+                            cell_val = basic_info.get("grade") or "四年级"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "授课时间" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_time", ""))
+                            cell_val = basic_info.get("lesson_time") or "40分钟"
+                            row.cells[c_idx + 1].text = str(cell_val)
                         elif cell_txt == "课型" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_type", ""))
+                            cell_val = basic_info.get("lesson_type") or "新授课"
+                            row.cells[c_idx + 1].text = str(cell_val)
 
                 # -------------------------------------------------------------
-                # 2. 大块文本区域填充（解决合并单元格，直接给最后一个 cell 赋值）
+                # 2. 大块文本区域填充（使用 row.cells[-1] 填充右侧合并单元格）
                 # -------------------------------------------------------------
                 elif row.cells[0].text.strip().startswith("课题"):
                     row.cells[-1].text = lesson_title
 
                 elif "教材分析" in row.cells[0].text:
-                    txt = basic_info.get("textbook_analysis") or word_data.get("textbook_analysis", "")
-                    if txt: row.cells[-1].text = str(txt)
+                    txt = basic_info.get("textbook_analysis") or word_data.get("textbook_analysis") or "结合本土实际素材深入浅出阐述概念。"
+                    row.cells[-1].text = str(txt)
 
                 elif "学情分析" in row.cells[0].text:
-                    txt = basic_info.get("student_analysis") or word_data.get("student_analysis", "")
-                    if txt: row.cells[-1].text = str(txt)
+                    txt = basic_info.get("student_analysis") or word_data.get("student_analysis") or "学生具备基础计算能力，但需加强生活应用。"
+                    row.cells[-1].text = str(txt)
 
                 elif "教学目标" in row.cells[0].text:
-                    obj = word_data.get("teaching_objectives", {})
+                    obj = word_data.get("teaching_objectives") or basic_info.get("teaching_objectives")
                     if isinstance(obj, dict):
-                        k = obj.get('knowledge') or obj.get('knowledge_and_skills', '')
-                        a = obj.get('ability') or obj.get('process_and_methods', '')
-                        l = obj.get('literacy') or obj.get('emotions_and_values', '')
+                        k = obj.get('knowledge') or obj.get('knowledge_and_skills') or '掌握基础计算方法。'
+                        a = obj.get('ability') or obj.get('process_and_methods') or '通过小组合作提升问题解决能力。'
+                        l = obj.get('literacy') or obj.get('emotions_and_values') or '体会数学在生活中的实用价值。'
                         row.cells[-1].text = f"1. 知识与技能：{k}\n2. 过程与方法：{a}\n3. 情感态度与价值观：{l}"
                     elif obj:
                         row.cells[-1].text = str(obj)
 
                 elif "教学重难点" in row.cells[0].text:
-                    kp = word_data.get('key_points', '')
-                    dp = word_data.get('difficult_points', '')
-                    if kp or dp:
-                        row.cells[-1].text = f"教学重点：{kp}\n教学难点：{dp}"
+                    kp = word_data.get('key_points') or '掌握计算法则及数位对齐。'
+                    dp = word_data.get('difficult_points') or '理解跨位数计算及退位算理。'
+                    row.cells[-1].text = f"教学重点：{kp}\n教学难点：{dp}"
 
                 elif "教法与学法" in row.cells[0].text:
-                    tm = word_data.get("teaching_methods", "")
+                    tm = word_data.get("teaching_methods")
                     if isinstance(tm, dict):
-                        row.cells[-1].text = f"教法：{tm.get('teacher_method', '')}\n学法：{tm.get('student_method', '')}"
+                        row.cells[-1].text = f"教法：{tm.get('teacher_method', '情境教学法')}\n学法：{tm.get('student_method', '自主探究、小组合作')}"
                     elif tm:
                         row.cells[-1].text = str(tm)
+                    else:
+                        row.cells[-1].text = "教法：情境教学法、启发引导\n学法：自主探究、合作交流"
 
                 elif "归纳总结" in row_text or "作业设计" in row_text:
-                    sh = word_data.get("summary_and_homework") or word_data.get("homework", "")
+                    sh = word_data.get("summary_and_homework") or word_data.get("homework")
                     if isinstance(sh, dict):
-                        row.cells[-1].text = f"【归纳总结】：{sh.get('summary', '')}\n【作业设计】：{sh.get('homework', '')}\n【素养发展】：{sh.get('literacy_development', '')}"
+                        row.cells[-1].text = f"【归纳总结】：{sh.get('summary', '梳理核心算理')}\n【作业设计】：{sh.get('homework', '完成课后练习')}\n【素养发展】：{sh.get('literacy_development', '提升运算能力')}"
                     elif sh:
                         row.cells[-1].text = str(sh)
+                    else:
+                        row.cells[-1].text = "【归纳总结】：总结相同数位对齐的计算方法。\n【作业设计】：结合本土超市购物结算完成计算。\n【素养发展】：培养认真严谨的计算习惯。"
 
                 elif "板书设计" in row_text and idx + 1 < len(table.rows):
-                    bd = word_data.get("board_design", "")
-                    if bd:
-                        table.rows[idx + 1].cells[-1].text = str(bd)
+                    bd = word_data.get("board_design") or f"{lesson_title}\n1. 关键步骤\n2. 算理展示"
+                    table.rows[idx + 1].cells[-1].text = str(bd)
 
                 elif "课后反思" in row_text and idx + 1 < len(table.rows):
-                    rf = word_data.get("reflection", "")
-                    if rf:
-                        table.rows[idx + 1].cells[-1].text = str(rf)
+                    rf = word_data.get("reflection") or "通过本土化真实情境引入，学生参与积极性高，有效突破了重难点。"
+                    table.rows[idx + 1].cells[-1].text = str(rf)
 
                 # -------------------------------------------------------------
-                # 3. 教学流程五环节填充（按环节关键词精准匹配行）
+                # 3. 教学流程五环节填充
                 # -------------------------------------------------------------
                 else:
                     first_cell = row.cells[0].text.strip()
                     process_list = word_data.get('teaching_process', [])
-                    
-                    if isinstance(process_list, list):
+
+                    if isinstance(process_list, list) and len(process_list) > 0:
                         for p_item in process_list:
                             if not isinstance(p_item, dict): continue
                             p_stage = str(p_item.get("stage", ""))
-                            
+
                             # 匹配模板左侧自带的 5 个流程阶段名称
                             matched = False
                             for kw in ["创设", "探究", "理解", "迁移", "创新"]:
                                 if kw in first_cell and kw in p_stage:
                                     matched = True
                                     break
-                            
+
                             if matched and len(row.cells) >= 4:
                                 row.cells[1].text = str(p_item.get("teacher_activity", ""))
                                 row.cells[2].text = str(p_item.get("student_activity", ""))
