@@ -1,42 +1,51 @@
+import os
+import json
+import urllib.parse
+import mimetypes
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pptx import Presentation
 from pptx.util import Pt
-import os
+from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.oxml import parse_xml, OxmlElement
+from docx.oxml.ns import nsdecls, qn
 
-# 自动定位模板路径
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.pptx')
+DOWNLOAD_DIR = os.path.join(CURRENT_DIR, 'static')
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+PPT_TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.pptx')
+WORD_TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.docx')
+
+# ---------------------------------------------------------------------------
+# 1. PPT 生成逻辑
+# ---------------------------------------------------------------------------
 def generate_ppt_from_template(ppt_data, basic_info, output_path):
-    # 载入现有模板，而不是创建空白 Presentation()
-    prs = Presentation(TEMPLATE_PATH if os.path.exists(TEMPLATE_PATH) else None)
+    prs = Presentation(PPT_TEMPLATE_PATH if os.path.exists(PPT_TEMPLATE_PATH) else None)
     
-    # 1. 替换/设置首页标题（假设 Slide 1 是封面）
+    # 设置封面标题
     if len(prs.slides) > 0:
         slide_layout = prs.slides[0]
         for shape in slide_layout.shapes:
             if shape.has_text_frame:
-                # 匹配封面标题占位符或文本框
                 if "课题" in shape.text_frame.text or shape.text_frame.text == "":
                     shape.text_frame.text = basic_info.get("lesson_title", "教学课件")
                     break
 
-    # 2. 动态生成内容页（使用模板中的“标题+内容” Layout，通常是 Index 1）
-    bullet_slide_layout = prs.slide_layouts[1] 
+    # 动态生成内容页
+    bullet_slide_layout = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else prs.slide_layouts[0]
     
     for slide_info in ppt_data.get("slides", []):
         slide = prs.slides.add_slide(bullet_slide_layout)
-        
-        # 填充标题
         if slide.shapes.title:
             slide.shapes.title.text = slide_info.get("title", "教学环节")
         
-        # 填充正文 Bullet Points
-        # 寻找正文文本框 (Body Placeholder)
         for shape in slide.shapes:
             if shape.has_text_frame and shape != slide.shapes.title:
                 tf = shape.text_frame
-                tf.clear() # 清除默认占位文本
-                
+                tf.clear()
                 for idx, pt_text in enumerate(slide_info.get("bullet_points", [])):
                     p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
                     p.text = pt_text
@@ -46,163 +55,184 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
     prs.save(output_path)
     return output_path
 
-from docx import Document
-from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.oxml import parse_xml, OxmlElement
-from docx.oxml.ns import nsdecls, qn
-
-def set_cell_background(cell, fill_hex):
-    """设置单元格背景颜色"""
-    tcPr = cell._tc.get_or_add_tcPr()
-    shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
-    tcPr.append(shd)
-
-def set_cell_margins(cell, top=140, bottom=140, left=150, right=150):
-    """设置单元格边距 (dxa 80 = 4pt)"""
-    tcPr = cell._tc.get_or_add_tcPr()
-    tcMar = OxmlElement('w:tcMar')
-    for margin_name, val in [('top', top), ('bottom', bottom), ('left', left), ('right', right)]:
-        node = OxmlElement(f'w:{margin_name}')
-        node.set(qn('w:w'), str(val))
-        node.set(qn('w:type'), 'dxa')
-        tcMar.append(node)
-    tcPr.append(tcMar)
-
+# ---------------------------------------------------------------------------
+# 2. Word 教学设计生成逻辑 (基于现有模板填充)
+# ---------------------------------------------------------------------------
 def generate_word_lesson_plan(word_data, basic_info, output_path):
-    doc = Document()
-    
-    # 页面边距设置 (1英寸)
-    for section in doc.sections:
-        section.top_margin = Inches(1)
-        section.bottom_margin = Inches(1)
-        section.left_margin = Inches(1)
-        section.right_margin = Inches(1)
+    # 如果有 template.docx 模板，则载入模板；否则新建文档
+    if os.path.exists(WORD_TEMPLATE_PATH):
+        doc = Document(WORD_TEMPLATE_PATH)
+    else:
+        doc = Document()
 
-    # 1. 大标题
-    title_p = doc.add_paragraph()
-    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title_p.add_run(f"《{basic_info.get('lesson_title', '教学设计')}》整体教学设计")
-    run.font.name = '黑体'
-    run.font.size = Pt(18)
-    run.font.bold = True
-    run.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D) # 深蓝标题
+    lesson_title = basic_info.get('lesson_title', '教学设计')
 
-    doc.add_paragraph()
+    # A. 替换文档主标题
+    for p in doc.paragraphs:
+        if "教学设计" in p.text:
+            p.text = f"《{lesson_title}》教学设计"
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            if len(p.runs) > 0:
+                p.runs[0].font.name = '黑体'
+                p.runs[0].font.size = Pt(18)
+                p.runs[0].font.bold = True
+            break
 
-    # 2. 基础信息表 (2行4列)
-    info_table = doc.add_table(rows=2, cols=4)
-    info_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    info_table.style = 'Table Grid'
-    
-    headers = [
-        ("科 目", basic_info.get("subject", "")),
-        ("年 级", basic_info.get("grade", "")),
-        ("课 题", basic_info.get("lesson_title", "")),
-        ("课 时", basic_info.get("period", "1课时"))
-    ]
-    
-    cells = info_table.flat_cells
-    for i, (label, val) in enumerate(headers):
-        cells[i*2].text = label
-        set_cell_background(cells[i*2], "F2F2F2")
-        cells[i*2].paragraphs[0].runs[0].font.bold = True
-        cells[i*2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # B. 填充主表格数据
+    if len(doc.tables) > 0:
+        table = doc.tables[0] # 获取主教案大表
         
-        cells[i*2+1].text = val
-        cells[i*2+1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
-        set_cell_margins(cells[i*2+1])
+        # 逐行遍历表格进行关键字匹配填充
+        for row in table.rows:
+            row_text = "".join([cell.text for cell in row.cells])
+            
+            # 1. 基础信息
+            if "课题名称" in row_text and len(row.cells) >= 2:
+                row.cells[1].text = lesson_title
+            elif "教材及版本" in row_text and len(row.cells) >= 2:
+                row.cells[1].text = basic_info.get("textbook", "标准教材")
+            elif "授课教师" in row_text and len(row.cells) >= 2:
+                row.cells[1].text = basic_info.get("teacher_name", "教师")
+            elif "学段" in row_text:
+                for c_idx, cell in enumerate(row.cells):
+                    if "学科" in cell.text and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("subject", "数学")
+                    if "适用年级" in cell.text and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("grade", "通用年级")
 
-    doc.add_paragraph()
+            # 2. 教学目标
+            elif "教学目标" in row.cells[0].text:
+                objectives = word_data.get("teaching_objectives", "")
+                if isinstance(objectives, dict):
+                    obj_text = f"1. 知识与技能：{objectives.get('knowledge', '')}\n2. 过程与方法：{objectives.get('ability', '')}\n3. 情感态度与价值观：{objectives.get('literacy', '')}"
+                else:
+                    obj_text = str(objectives)
+                row.cells[1].text = obj_text
 
-    # 3. 核心教学过程四栏表 (环节 | 教师活动 | 学生活动 | 设计意图)
+            # 3. 教学重难点
+            elif "教学重难点" in row.cells[0].text:
+                kp = word_data.get("key_points", "")
+                dp = word_data.get("difficult_points", "")
+                row.cells[1].text = f"教学重点：{kp}\n教学难点：{dp}"
+
+            # 4. 板书设计
+            elif "板书设计" in row.cells[0].text:
+                row.cells[1].text = word_data.get("board_design", f"板书设计：{lesson_title}\n1. 核心概念与推导\n2. 练习与总结")
+
+            # 5. 分层作业
+            elif "分层作业" in row.cells[0].text:
+                homework = word_data.get("homework", {})
+                if isinstance(homework, dict):
+                    hw_text = f"基础巩固：{homework.get('basic', '')}\n拓展提升：{homework.get('advanced', '')}"
+                else:
+                    hw_text = str(homework)
+                row.cells[1].text = hw_text
+
+            # 6. 教学反思
+            elif "课后反思" in row.cells[0].text or "教学反思" in row.cells[0].text:
+                row.cells[1].text = word_data.get("reflection", "根据课堂实际生成反馈，注重本土素材与核心概念的深度结合。")
+
+    # C. 动态填充【五环节教学流程】明细行
     process_list = word_data.get('teaching_process', [])
-    main_table = doc.add_table(rows=1 + len(process_list), cols=4)
-    main_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    main_table.style = 'Table Grid'
-    
-    col_widths = [Inches(1.2), Inches(2.3), Inches(2.3), Inches(1.2)]
-    
-    # 表头设置
-    hdr_titles = ["教学环节", "教师活动", "学生活动", "设计意图"]
-    hdr_cells = main_table.rows[0].cells
-    for i, title in enumerate(hdr_titles):
-        hdr_cells[i].text = title
-        hdr_cells[i].width = col_widths[i]
-        set_cell_background(hdr_cells[i], "1F497D") # 表头深蓝背景
-        p = hdr_cells[i].paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        if p.runs:
-            p.runs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-            p.runs[0].font.bold = True
-
-    # 逐行填入教学过程
-    for row_idx, stage_data in enumerate(process_list, start=1):
-        row_cells = main_table.rows[row_idx].cells
-        data_items = [
-            stage_data.get("stage", ""),
-            stage_data.get("teacher_activity", ""),
-            stage_data.get("student_activity", ""),
-            stage_data.get("design_intent", "")
-        ]
+    if len(doc.tables) > 0 and len(process_list) > 0:
+        table = doc.tables[0]
+        # 寻找“教学环节”所在的表头行索引
+        header_row_idx = -1
+        for idx, row in enumerate(table.rows):
+            if "教学环节" in row.cells[0].text and "教师活动" in row.cells[1].text:
+                header_row_idx = idx
+                break
         
-        for c_idx, text in enumerate(data_items):
-            cell = row_cells[c_idx]
-            cell.width = col_widths[c_idx]
-            cell.text = text
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-            set_cell_margins(cell)
-            
-            p = cell.paragraphs[0]
-            p.paragraph_format.line_spacing = 1.15
-            p.paragraph_format.space_after = Pt(4)
-            
-            if c_idx == 0:
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                if p.runs:
-                    p.runs[0].font.bold = True
-            else:
-                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        if header_row_idx != -1:
+            # 将具体环节写入随后的数据行中
+            for i, process in enumerate(process_list):
+                target_row_idx = header_row_idx + 1 + i
+                if target_row_idx < len(table.rows):
+                    row = table.rows[target_row_idx]
+                    if len(row.cells) >= 4:
+                        row.cells[0].text = process.get("stage", "")
+                        row.cells[1].text = process.get("teacher_activity", "")
+                        row.cells[2].text = process.get("student_activity", "")
+                        row.cells[3].text = process.get("design_intent", "")
 
     doc.save(output_path)
     return output_path
 
-# 在 SimpleHandler 的 do_POST 方法中
-def do_POST(self):
-    content_length = int(self.headers['Content-Length'])
-    post_data = self.rfile.read(content_length)
-    req_json = json.loads(post_data.decode('utf-8'))
+# ---------------------------------------------------------------------------
+# 3. HTTP 服务 Handler
+# ---------------------------------------------------------------------------
+class SimpleHandler(BaseHTTPRequestHandler):
 
-    # 提取大模型返回的结构化 JSON
-    model_output = req_json.get('model_output', {})
-    basic_info = model_output.get('basic_info', {})
-    ppt_data = model_output.get('ppt_data', {})
-    word_data = model_output.get('word_data', {})
+    def do_GET(self):
+        """处理文件下载"""
+        parsed_path = urllib.parse.urlparse(self.path).path
+        if parsed_path.startswith('/static/'):
+            filename = os.path.basename(parsed_path)
+            # URL 解码处理中文文件名
+            decoded_filename = urllib.parse.unquote(filename)
+            file_path = os.path.join(DOWNLOAD_DIR, decoded_filename)
+            
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                self.send_response(200)
+                mime_type, _ = mimetypes.guess_type(file_path)
+                self.send_header('Content-Type', mime_type or 'application/octet-stream')
+                self.send_header('Content-Disposition', f'attachment; filename="{urllib.parse.quote(decoded_filename)}"')
+                self.send_header('Content-Length', str(os.path.getsize(file_path)))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                with open(file_path, 'rb') as f:
+                    self.wfile.write(f.read())
+                return
 
-    lesson_title = basic_info.get('lesson_title', 'default')
-    
-    # 动态生成唯一文件名
-    ppt_filename = f"{lesson_title}_教学课件.pptx"
-    word_filename = f"{lesson_title}_教学设计.docx"
-    
-    ppt_path = os.path.join(DOWNLOAD_DIR, ppt_filename)
-    word_path = os.path.join(DOWNLOAD_DIR, word_filename)
+        self.send_response(404)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b"File Not Found")
 
-    # 1. 动态填充 PPT 模板
-    generate_ppt_from_template(ppt_data, basic_info, ppt_path)
-    
-    # 2. 动态生成 Word 教案表格
-    generate_word_lesson_plan(word_data, basic_info, word_path)
+    def do_POST(self):
+        """接收 Dify 请求并生成文档"""
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        req_json = json.loads(post_data.decode('utf-8'))
 
-    # 返回给 Dify 的下载链接或文件列表
-    response_data = {
-        "status": "success",
-        "ppt_url": f"/static/{ppt_filename}",
-        "word_url": f"/static/{word_filename}"
-    }
-    
-    self.send_response(200)
-    self.send_header('Content-Type', 'application/json')
-    self.end_headers()
-    self.wfile.write(json.dumps(response_data).encode('utf-8'))
+        # 解析数据
+        model_output = req_json.get('model_output', req_json)
+        basic_info = model_output.get('basic_info', {})
+        ppt_data = model_output.get('ppt_data', {})
+        word_data = model_output.get('word_data', {})
+
+        lesson_title = basic_info.get('lesson_title', '教学设计')
+        
+        ppt_filename = f"{lesson_title}_教学课件.pptx"
+        word_filename = f"{lesson_title}_教学设计.docx"
+        
+        ppt_path = os.path.join(DOWNLOAD_DIR, ppt_filename)
+        word_path = os.path.join(DOWNLOAD_DIR, word_filename)
+
+        # 生成文件
+        generate_ppt_from_template(ppt_data, basic_info, ppt_path)
+        generate_word_lesson_plan(word_data, basic_info, word_path)
+
+        # 返回文件外网下载链接
+        domain = "https://dify-file-generator.onrender.com"
+        response_data = {
+            "status": "success",
+            "ppt_url": f"{domain}/static/{urllib.parse.quote(ppt_filename)}",
+            "word_url": f"{domain}/static/{urllib.parse.quote(word_filename)}"
+        }
+        
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(response_data).encode('utf-8'))
+
+def run(server_class=HTTPServer, handler_class=SimpleHandler, port=10000):
+    server_address = ('', port)
+    httpd = server_class(server_address, handler_class)
+    print(f"Server starting on port {port}...")
+    httpd.serve_forever()
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 10000))
+    run(port=port)
