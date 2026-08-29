@@ -59,103 +59,103 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
 # 2. Word 教学设计生成逻辑 (基于现有模板填充)
 # ---------------------------------------------------------------------------
 def generate_word_lesson_plan(word_data, basic_info, output_path):
-    # 如果有 template.docx 模板，则载入模板；否则新建文档
-    if os.path.exists(WORD_TEMPLATE_PATH):
-        doc = Document(WORD_TEMPLATE_PATH)
-    else:
-        doc = Document()
+    try:
+        if os.path.exists(WORD_TEMPLATE_PATH):
+            doc = Document(WORD_TEMPLATE_PATH)
+        else:
+            doc = Document()
 
-    lesson_title = basic_info.get('lesson_title', '教学设计')
+        lesson_title = basic_info.get('lesson_title', '教学设计')
 
-    # A. 替换文档主标题
-    for p in doc.paragraphs:
-        if "教学设计" in p.text:
-            p.text = f"《{lesson_title}》教学设计"
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            if len(p.runs) > 0:
-                p.runs[0].font.name = '黑体'
-                p.runs[0].font.size = Pt(18)
-                p.runs[0].font.bold = True
-            break
-
-    # B. 填充主表格数据
-    if len(doc.tables) > 0:
-        table = doc.tables[0] # 获取主教案大表
-        
-        # 逐行遍历表格进行关键字匹配填充
-        for row in table.rows:
-            row_text = "".join([cell.text for cell in row.cells])
-            
-            # 1. 基础信息
-            if "课题名称" in row_text and len(row.cells) >= 2:
-                row.cells[1].text = lesson_title
-            elif "教材及版本" in row_text and len(row.cells) >= 2:
-                row.cells[1].text = basic_info.get("textbook", "标准教材")
-            elif "授课教师" in row_text and len(row.cells) >= 2:
-                row.cells[1].text = basic_info.get("teacher_name", "教师")
-            elif "学段" in row_text:
-                for c_idx, cell in enumerate(row.cells):
-                    if "学科" in cell.text and c_idx + 1 < len(row.cells):
-                        row.cells[c_idx+1].text = basic_info.get("subject", "数学")
-                    if "适用年级" in cell.text and c_idx + 1 < len(row.cells):
-                        row.cells[c_idx+1].text = basic_info.get("grade", "通用年级")
-
-            # 2. 教学目标
-            elif "教学目标" in row.cells[0].text:
-                objectives = word_data.get("teaching_objectives", "")
-                if isinstance(objectives, dict):
-                    obj_text = f"1. 知识与技能：{objectives.get('knowledge', '')}\n2. 过程与方法：{objectives.get('ability', '')}\n3. 情感态度与价值观：{objectives.get('literacy', '')}"
-                else:
-                    obj_text = str(objectives)
-                row.cells[1].text = obj_text
-
-            # 3. 教学重难点
-            elif "教学重难点" in row.cells[0].text:
-                kp = word_data.get("key_points", "")
-                dp = word_data.get("difficult_points", "")
-                row.cells[1].text = f"教学重点：{kp}\n教学难点：{dp}"
-
-            # 4. 板书设计
-            elif "板书设计" in row.cells[0].text:
-                row.cells[1].text = word_data.get("board_design", f"板书设计：{lesson_title}\n1. 核心概念与推导\n2. 练习与总结")
-
-            # 5. 分层作业
-            elif "分层作业" in row.cells[0].text:
-                homework = word_data.get("homework", {})
-                if isinstance(homework, dict):
-                    hw_text = f"基础巩固：{homework.get('basic', '')}\n拓展提升：{homework.get('advanced', '')}"
-                else:
-                    hw_text = str(homework)
-                row.cells[1].text = hw_text
-
-            # 6. 教学反思
-            elif "课后反思" in row.cells[0].text or "教学反思" in row.cells[0].text:
-                row.cells[1].text = word_data.get("reflection", "根据课堂实际生成反馈，注重本土素材与核心概念的深度结合。")
-
-    # C. 动态填充【五环节教学流程】明细行
-    process_list = word_data.get('teaching_process', [])
-    if len(doc.tables) > 0 and len(process_list) > 0:
-        table = doc.tables[0]
-        # 寻找“教学环节”所在的表头行索引
-        header_row_idx = -1
-        for idx, row in enumerate(table.rows):
-            if "教学环节" in row.cells[0].text and "教师活动" in row.cells[1].text:
-                header_row_idx = idx
+        # A. 替换主标题
+        for p in doc.paragraphs:
+            if "教学设计" in p.text:
+                p.text = f"《{lesson_title}》教学设计"
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 break
-        
-        if header_row_idx != -1:
-            # 将具体环节写入随后的数据行中
-            for i, process in enumerate(process_list):
-                target_row_idx = header_row_idx + 1 + i
-                if target_row_idx < len(table.rows):
-                    row = table.rows[target_row_idx]
-                    if len(row.cells) >= 4:
-                        row.cells[0].text = process.get("stage", "")
-                        row.cells[1].text = process.get("teacher_activity", "")
-                        row.cells[2].text = process.get("student_activity", "")
-                        row.cells[3].text = process.get("design_intent", "")
 
-    doc.save(output_path)
+        # B. 填充主表格
+        if len(doc.tables) > 0:
+            table = doc.tables[0]
+            
+            for row in table.rows:
+                # 获取整行文本用于关键字定位
+                row_text = "".join([cell.text for cell in row.cells])
+
+                # 1. 基础信息行填充
+                for c_idx, cell in enumerate(row.cells):
+                    cell_txt = cell.text.strip()
+                    
+                    if "授课教师" in cell_txt and c_idx + 1 < len(row.cells) and "单位" not in cell_txt:
+                        row.cells[c_idx+1].text = basic_info.get("teacher_name", "教师")
+                    elif "授课教师单位" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("teacher_unit", "当地实验小学")
+                    elif "授课日期" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("lesson_date", "2026年")
+                    elif "学段" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("stage", "小学")
+                    elif "学科" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("subject", "数学")
+                    elif "适用年级" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("grade", "四年级")
+                    elif "授课时间" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("lesson_time", "40分钟")
+                    elif "课型" in cell_txt and c_idx + 1 < len(row.cells):
+                        row.cells[c_idx+1].text = basic_info.get("lesson_type", "新授课")
+
+                # 2. 大块文本区域填充
+                if "课题" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = lesson_title
+                elif "教材分析" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = basic_info.get("textbook_analysis", "结合本土实际素材深入浅出阐述概念。")
+                elif "学情分析" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = basic_info.get("student_analysis", "学生具备基础计算能力，但需加强生活应用。)
+                elif "教学目标" in row.cells[0].text and len(row.cells) > 1:
+                    obj = word_data.get("teaching_objectives", {})
+                    if isinstance(obj, dict):
+                        row.cells[1].text = f"1. 知识与技能：{obj.get('knowledge', '')}\n2. 过程与方法：{obj.get('ability', '')}\n3. 情感态度与价值观：{obj.get('literacy', '')}"
+                    else:
+                        row.cells[1].text = str(obj)
+                elif "教学重难点" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = f"教学重点：{word_data.get('key_points', '')}\n教学难点：{word_data.get('difficult_points', '')}"
+                elif "教法与学法" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = word_data.get("teaching_methods", "教法：情境引入、启发引导；学法：小组合作、自主探究")
+                elif "板书设计" in row.cells[0].text and len(row.cells) > 1:
+                    row.cells[1].text = str(word_data.get("board_design", ""))
+                elif "课后反思" in row.cells[0].text or "教学反思" in row.cells[0].text:
+                    if len(row.cells) > 1:
+                        row.cells[1].text = str(word_data.get("reflection", "课堂结合本土素材，激发了学生的探究兴趣。"))
+
+        # C. 填充五环节教学流程
+        process_list = word_data.get('teaching_process', [])
+        if len(doc.tables) > 0 and len(process_list) > 0:
+            table = doc.tables[0]
+            header_row_idx = -1
+            for idx, row in enumerate(table.rows):
+                if len(row.cells) >= 3 and "教学环节" in row.cells[0].text and "教师活动" in row.cells[1].text:
+                    header_row_idx = idx
+                    break
+            
+            if header_row_idx != -1:
+                for i, process in enumerate(process_list):
+                    target_row_idx = header_row_idx + 1 + i
+                    if target_row_idx < len(table.rows):
+                        row = table.rows[target_row_idx]
+                        # 确保单元格数量能够对应 [环节, 教师活动, 学生活动, 设计意图]
+                        if len(row.cells) >= 4:
+                            row.cells[0].text = str(process.get("stage", ""))
+                            row.cells[1].text = str(process.get("teacher_activity", ""))
+                            row.cells[2].text = str(process.get("student_activity", ""))
+                            row.cells[3].text = str(process.get("design_intent", ""))
+
+        doc.save(output_path)
+    except Exception as e:
+        print(f"[ERROR Word Generation] {str(e)}")
+        doc = Document()
+        doc.add_heading(f"《{basic_info.get('lesson_title', '教学设计')}》", 0)
+        doc.add_paragraph(str(word_data))
+        doc.save(output_path)
+
     return output_path
 
 # ---------------------------------------------------------------------------
