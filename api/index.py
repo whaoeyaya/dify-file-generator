@@ -249,11 +249,54 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                         row.cells[-1].text = str(tm)
 
                 elif "归纳总结" in row_text or "作业设计" in row_text:
-                    sh = word_data.get("summary_and_homework") or word_data.get("homework", {})
-                    if isinstance(sh, dict):
-                        row.cells[-1].text = f"【归纳总结】：{sh.get('summary', '')}\n【作业设计】：{sh.get('homework', '')}\n【素养发展】：{sh.get('literacy_development', '')}"
+                    # 1. 尝试多途径获取作业数据
+                    hw = word_data.get("homework", {})
+                    if isinstance(hw, str):
+                        hw_basic = hw
+                        hw_advanced = ""
+                    elif isinstance(hw, dict):
+                        hw_basic = hw.get("basic") or hw.get("homework", "")
+                        hw_advanced = hw.get("advanced", "")
                     else:
-                        row.cells[-1].text = str(sh)
+                        hw_basic, hw_advanced = "", ""
+                
+                    # 组合作业文本
+                    homework_text = f"1. 基础作业：{hw_basic}\n2. 拓展作业：{hw_advanced}" if hw_advanced else f"{hw_basic}"
+                
+                    # 2. 动态提取/生成归纳总结（如果模型没单独给 summary，自动从教学过程第 5 环节提取）
+                    sh_dict = word_data.get("summary_and_homework", {})
+                    summary_text = ""
+                    if isinstance(sh_dict, dict):
+                        summary_text = sh_dict.get("summary", "")
+                
+                    if not summary_text:
+                        # 保底方案：从教学过程最后一个环节抽取设计意图作为归纳总结
+                        process_list = word_data.get("teaching_process", [])
+                        if process_list and len(process_list) >= 5:
+                            last_stage = process_list[-1]
+                            summary_text = f"引导学生回顾本节课条形统计图的特点（标题、横轴、纵轴、直条），归纳1格代表多个单位的画法。{last_stage.get('design_intent', '')}"
+                        else:
+                            summary_text = "引导学生自主梳理本节课的核心概念，总结条形统计图的绘制步骤与应用技巧。"
+                
+                    # 3. 动态提取/生成素养发展（如果模型没单独给，自动从教学目标提取）
+                    literacy_text = ""
+                    if isinstance(sh_dict, dict):
+                        literacy_text = sh_dict.get("literacy_development", "")
+                    
+                    if not literacy_text:
+                        objs = word_data.get("teaching_objectives", {})
+                        if isinstance(objs, dict):
+                            literacy_text = objs.get("literacy", "") or objs.get("ability", "")
+                        if not literacy_text:
+                            literacy_text = "通过本土农业数据统计，培养数据分析观念，提升运用数学知识解决真实生活问题的核心素养。"
+                
+                    # 4. 拼装丰富填入 Word 单元格
+                    full_text = (
+                        f"【归纳总结】\n{summary_text}\n\n"
+                        f"【作业设计】\n{homework_text}\n\n"
+                        f"【素养发展】\n{literacy_text}"
+                    )
+                    row.cells[-1].text = full_text
 
                 elif "板书设计" in row_text and idx + 1 < len(table.rows):
                     table.rows[idx + 1].cells[-1].text = str(word_data.get("board_design", ""))
