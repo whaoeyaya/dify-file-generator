@@ -29,13 +29,14 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import PP_PLACEHOLDER
 
-# 1. 使用基于当前脚本文件 (index.py) 的绝对路径，解决部署环境工作目录不一致的问题
+# 1. 基准路径解析
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PPT_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.pptx")
 
 def safe_json_parse(data):
-    """安全解析 JSON 或字典"""
+    """安全解析字典或 JSON 字符串"""
     if isinstance(data, dict):
         return data
     if isinstance(data, str):
@@ -45,91 +46,175 @@ def safe_json_parse(data):
             return {}
     return {}
 
-def set_font_style(run, size_pt, bold=False, color_rgb=None):
-    """统一设置字体大小与加粗，若传了 color_rgb 则覆盖颜色"""
-    if size_pt:
-        run.font.size = Pt(size_pt)
-    run.font.bold = bold
-    if color_rgb:
-        run.font.color.rgb = RGBColor(*color_rgb)
-
-def fill_text_to_target(tf, text, size_pt=None, bold=False, color_rgb=None, align=None):
+def get_layout_by_type(prs):
     """
-    填充文本到 TextFrame，优先保留模板本身样式（若未显式指定 color_rgb 则不覆盖模板颜色）
+    智能挑选母版布局：
+    优先按名称匹配 (Cover/Title/封面 与 Content/Body/正文)，兜底按索引 0 和 1
+    """
+    cover_layout = None
+    content_layout = None
+
+    for layout in prs.slide_layouts:
+        name = layout.name.lower()
+        if any(k in name for k in ["cover", "title", "封面", "首页"]) and not cover_layout:
+            cover_layout = layout
+        elif any(k in name for k in ["content", "body", "正文", "内容", "内页"]) and not content_layout:
+            content_layout = layout
+
+    # 兜底策略
+    if not cover_layout and len(prs.slide_layouts) > 0:
+        cover_layout = prs.slide_layouts[0]
+    if not content_layout:
+        content_layout = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else cover_layout
+
+    return cover_layout, content_layout
+
+def find_placeholders(slide):
+    """
+    精准识别页面中的占位符：标题、副标题、正文内容
+    """
+    title_ph = slide.shapes.title
+    subtitle_ph = None
+    body_ph = None
+
+    for shape in slide.placeholders:
+        if not shape.has_text_frame:
+            continue
+        ph_type = shape.placeholder_format.type
+        
+        # 匹配标题
+        if ph_type in (PP_PLACEHOLDER.CENTER_TITLE, PP_PLACEHOLDER.TITLE) and not title_ph:
+            title_ph = shape
+        # 匹配副标题
+        elif ph_type == PP_PLACEHOLDER.SUBTITLE and not subtitle_ph:
+            subtitle_ph = shape
+        # 匹配正文内容/对象
+        elif ph_type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT) and not body_ph:
+            body_ph = shape
+
+    # 若未按类型识别出，则按索引或名称进行二次匹配
+    if not subtitle_ph or not body_ph:
+        for shape in slide.placeholders:
+            if shape == title_ph or not shape.has_text_frame:
+                continue
+            name = shape.name.lower()
+            if ("subtitle" in name or shape.placeholder_format.idx == 1) and not subtitle_ph:
+                subtitle_ph = shape
+            elif ("content" in name or "body" in name or "text" in name) and not body_ph:
+                body_ph = shape
+
+    return title_ph, subtitle_ph, body_ph
+
+def fill_text_frame(tf, text_content, default_size=None, align=None, default_color=None):
+    """
+    填充文本到 TextFrame，保留母版原本样式：
+    1. 清空默认 Placeholder 示例文本
+    2. 支持按 \n 拆分成多个独立段落
+    3. 自动识别 【标签】 并加粗处理
     """
     tf.word_wrap = True
-    # 清空已有无用段落，保留第一个
-    p = tf.paragraphs[0]
-    p.text = text
-    if align is not None:
-        p.alignment = align
-    if p.runs and (size_pt or bold or color_rgb):
-        set_font_style(p.runs[0], size_pt=size_pt, bold=bold, color_rgb=color_rgb)
+    tf.text = ""  # 清空占位符里的默认文本
+
+    if isinstance(text_content, str):
+        lines = [line.strip() for line in text_content.split("\n") if line.strip()]
+    elif isinstance(text_content, list):
+        lines = text_content
+    else:
+        lines = [str(text_content)]
+
+    for idx, line_text in enumerate(lines):
+        p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
+        if align is not None:
+            p.alignment = align
+
+        # 识别带括号的标题项（例如：【教学重点】、【教师活动】）
+        if line_text.startswith("【") and "】" in line_text:
+            split_idx = line_text.index("】") + 1
+            header_str = line_text[:split_idx]
+            body_str = line_text[split_idx:]
+
+            # 标题部分：加粗
+            run_h = p.add_run()
+            run_h.text = header_str
+            run_h.font.bold = True
+            if default_size: run_h.font.size = Pt(default_size)
+            if default_color: run_h.font.color.rgb = RGBColor(*default_color)
+
+            # 正文部分：常态
+            if body_str:
+                run_b = p.add_run()
+                run_b.text = body_str
+                if default_size: run_b.font.size = Pt(default_size)
+                if default_color: run_b.font.color.rgb = RGBColor(*default_color)
+        else:
+            run = p.add_run()
+            run.text = line_text
+            if default_size: run.font.size = Pt(default_size)
+            if default_color: run.font.color.rgb = RGBColor(*default_color)
 
 def generate_ppt_from_template(ppt_data, basic_info, output_path):
     try:
-        # 1. 安全解析数据
+        # 1. 安全解析输入数据
         ppt_data = safe_json_parse(ppt_data)
         basic_info = safe_json_parse(basic_info)
 
-        # 兼容 structured_output 层级
-        if isinstance(ppt_data, dict):
-            word_data = ppt_data.get("word_data") or ppt_data.get("word_content") or ppt_data
-            if "basic_info" in ppt_data and isinstance(ppt_data["basic_info"], dict):
-                basic_info.update(ppt_data["basic_info"])
-        else:
-            word_data = {}
+        # 兼容 structured_output 顶层节点
+        ppt_content = ppt_data.get("ppt_content") or {}
+        word_data = ppt_data.get("word_data") or ppt_data.get("word_content") or ppt_data
 
-        # 2. 读取 PPT 模板（带调试日志）
+        if "basic_info" in ppt_data and isinstance(ppt_data["basic_info"], dict):
+            basic_info.update(ppt_data["basic_info"])
+
+        # 2. 读取 PPT 模板
         template_exists = os.path.exists(PPT_TEMPLATE_PATH)
         print(f"[PPT Engine] Template Path: {PPT_TEMPLATE_PATH} | Exists: {template_exists}")
 
         if template_exists:
             prs = Presentation(PPT_TEMPLATE_PATH)
         else:
-            print("[WARN PPT Engine] 模板文件未找到，降级使用空白演示文稿。")
+            print("[WARN PPT Engine] 模板文件未找到，降级使用默认空白 Presentation。")
             prs = Presentation()
 
-        layouts_count = len(prs.slide_layouts)
-        cover_layout = prs.slide_layouts[0]
-        content_layout = prs.slide_layouts[1] if layouts_count > 1 else prs.slide_layouts[0]
+        # 获取合适的封面和内容页母版布局
+        cover_layout, content_layout = get_layout_by_type(prs)
 
         lesson_title = basic_info.get("lesson_title") or word_data.get("lesson_title", "教学课件")
 
         # ---------------- Slide 1: 封面页 ----------------
         slide_cover = prs.slides.add_slide(cover_layout)
-        
-        # 优先寻找模板原生的标题/副标题占位符
-        title_placeholder = None
-        subtitle_placeholder = None
-        for shape in slide_cover.placeholders:
-            if shape.placeholder_format.idx == 0 or "title" in shape.name.lower():
-                title_placeholder = shape
-            elif shape.placeholder_format.idx == 1 or "subtitle" in shape.name.lower():
-                subtitle_placeholder = shape
+        title_ph, subtitle_ph, _ = find_placeholders(slide_cover)
 
         # 填充标题
-        if title_placeholder and title_placeholder.has_text_frame:
-            fill_text_to_target(title_placeholder.text_frame, f"{lesson_title} 教学课件", align=PP_ALIGN.CENTER)
+        cover_title_text = f"{lesson_title} 教学课件"
+        if title_ph and title_ph.has_text_frame:
+            fill_text_frame(title_ph.text_frame, cover_title_text, align=PP_ALIGN.CENTER)
         else:
-            t_box = slide_cover.shapes.add_textbox(Inches(1), Inches(2), Inches(11.3), Inches(2))
-            fill_text_to_target(t_box.text_frame, f"{lesson_title} 教学课件", size_pt=40, bold=True, color_rgb=(0, 51, 102), align=PP_ALIGN.CENTER)
+            t_box = slide_cover.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.3), Inches(2))
+            fill_text_frame(t_box.text_frame, cover_title_text, default_size=40, default_color=(0, 51, 102), align=PP_ALIGN.CENTER)
 
-        # 填充副标题信息
+        # 填充副标题
         sub_info = (
             f"学科：{basic_info.get('subject', '数学')}  |  年级：{basic_info.get('grade', '三年级')}\n"
             f"执教教师：{basic_info.get('teacher_name', '教师')}"
         )
-        if subtitle_placeholder and subtitle_placeholder.has_text_frame:
-            fill_text_to_target(subtitle_placeholder.text_frame, sub_info, align=PP_ALIGN.CENTER)
+        if subtitle_ph and subtitle_ph.has_text_frame:
+            fill_text_frame(subtitle_ph.text_frame, sub_info, align=PP_ALIGN.CENTER)
         else:
-            s_box = slide_cover.shapes.add_textbox(Inches(1), Inches(4.2), Inches(11.3), Inches(2))
-            fill_text_to_target(s_box.text_frame, sub_info, size_pt=20, color_rgb=(80, 80, 80), align=PP_ALIGN.CENTER)
+            s_box = slide_cover.shapes.add_textbox(Inches(1), Inches(4.5), Inches(11.3), Inches(2))
+            fill_text_frame(s_box.text_frame, sub_info, default_size=20, default_color=(80, 80, 80), align=PP_ALIGN.CENTER)
 
         # ---------------- Slide 2: 教学目标与重难点 ----------------
         slide_target = prs.slides.add_slide(content_layout)
-        
-        # 提取目标数据
+        t_ph, _, b_ph = find_placeholders(slide_target)
+
+        # 设置标题
+        if t_ph and t_ph.has_text_frame:
+            fill_text_frame(t_ph.text_frame, "教学目标与重难点")
+        else:
+            tb_title = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
+            fill_text_frame(tb_title.text_frame, "教学目标与重难点", default_size=32, default_color=(0, 51, 102))
+
+        # 组合目标内容
         objs = word_data.get("teaching_objectives") or word_data.get("targets", {})
         if isinstance(objs, dict):
             k_obj = objs.get("knowledge", "")
@@ -141,45 +226,32 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
         key_pts = word_data.get("key_points", "掌握核心概念与表达方法。")
         diff_pts = word_data.get("difficult_points", "理解知识的迁移与运用。")
 
-        target_text = (
-            f"【教学重点】\n{key_pts}\n\n"
-            f"【教学难点】\n{diff_pts}\n\n"
-            f"【核心目标】\n"
-            f"• 知识目标：{k_obj}\n"
-            f"• 能力目标：{a_obj}\n"
+        target_text = [
+            f"【教学重点】\n{key_pts}",
+            f"【教学难点】\n{diff_pts}",
+            "【核心目标】",
+            f"• 知识目标：{k_obj}",
+            f"• 能力目标：{a_obj}",
             f"• 素养目标：{l_obj}"
-        )
+        ]
 
-        # 检查内容页占位符
-        title_ph = slide_target.shapes.title
-        if title_ph and title_ph.has_text_frame:
-            fill_text_to_target(title_ph.text_frame, "教学目标与重难点")
-        else:
-            tb_title = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
-            fill_text_to_target(tb_title.text_frame, "教学目标与重难点", size_pt=32, bold=True, color_rgb=(0, 51, 102))
-
-        # 填入正文内容
-        body_ph = None
-        for shape in slide_target.placeholders:
-            if shape != title_ph and shape.has_text_frame:
-                body_ph = shape
-                break
-        
-        if body_ph:
-            fill_text_to_target(body_ph.text_frame, target_text)
+        if b_ph and b_ph.has_text_frame:
+            fill_text_frame(b_ph.text_frame, "\n\n".join(target_text))
         else:
             tb_body = slide_target.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-            fill_text_to_target(tb_body.text_frame, target_text, size_pt=18, color_rgb=(51, 51, 51))
+            fill_text_frame(tb_body.text_frame, "\n\n".join(target_text), default_size=18, default_color=(51, 51, 51))
 
         # ---------------- Slide 3+: 动态生成教学环节 ----------------
-        process_list = word_data.get("teaching_process") or word_data.get("slides")
+        # 优先读取专门为 PPT 格式化好的 slides，其次读取教学流程
+        ppt_slides = ppt_content.get("slides")
+        process_list = ppt_slides if isinstance(ppt_slides, list) and len(ppt_slides) > 0 else (word_data.get("teaching_process") or [])
 
         default_stages = [
-            {"stage": "创设情境", "teacher_activity": "展示真实情境与问题，引入新课。", "student_activity": "观察思考并表达想法。", "design_intent": "激发学习兴趣，唤醒旧知。"},
-            {"stage": "探究新知", "teacher_activity": "组织小组合作与动手实践，引导归纳知识。", "student_activity": "动手操作、讨论交流并总结结论。", "design_intent": "培养实践与逻辑推理能力。"},
-            {"stage": "理解应用", "teacher_activity": "出示基础巩固练习题，指导规范解答。", "student_activity": "独立解答，并在全班汇报展示。", "design_intent": "及时巩固新知，规范解题步骤。"},
-            {"stage": "迁移拓展", "teacher_activity": "结合生活实际，提供综合拓展练习。", "student_activity": "运用新知解决实际应用问题。", "design_intent": "体会知识与生活的密切联系。"},
-            {"stage": "总结反思", "teacher_activity": "引导学生回顾本节课收获与疑问。", "student_activity": "谈谈收获，梳理知识框架。", "design_intent": "系统梳理，提升核心素养。"}
+            {"stage": "一、创设情境，引入新课", "teacher_activity": "展示真实情境与问题，引入新课。", "student_activity": "观察思考并表达想法。", "design_intent": "激发学习兴趣，唤醒旧知。"},
+            {"stage": "二、师生互动，探究新知", "teacher_activity": "组织小组合作与动手实践，引导归纳知识。", "student_activity": "动手操作、讨论交流并总结结论。", "design_intent": "培养实践与逻辑推理能力。"},
+            {"stage": "三、巩固练习，理解应用", "teacher_activity": "出示基础巩固练习题，指导规范解答。", "student_activity": "独立解答，并在全班汇报展示。", "design_intent": "及时巩固新知，规范解题步骤。"},
+            {"stage": "四、拓展延伸，提升素养", "teacher_activity": "结合生活实际，提供综合拓展练习。", "student_activity": "运用新知解决实际应用问题。", "design_intent": "体会知识与生活的密切联系。"},
+            {"stage": "五、全课总结，反思评价", "teacher_activity": "引导学生回顾本节课收获与疑问。", "student_activity": "谈谈收获，梳理知识框架。", "design_intent": "系统梳理，提升核心素养。"}
         ]
 
         if not isinstance(process_list, list) or len(process_list) == 0:
@@ -190,40 +262,34 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
                 continue
 
             slide_p = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_p)
+
             stage_title = item.get("stage") or item.get("title") or "教学环节"
             
-            t_act = item.get("teacher_activity", "")
-            s_act = item.get("student_activity", "")
-            d_intent = item.get("design_intent", "")
-
-            content_text = (
-                f"【教师活动】\n{t_act}\n\n"
-                f"【学生活动】\n{s_act}\n\n"
-                f"【设计意图】\n{d_intent}"
-            )
-
-            # 设置标题
-            t_ph = slide_p.shapes.title
+            # 标题填充
+            full_title = stage_title if stage_title.startswith("教学环节") else f"教学环节：{stage_title}"
             if t_ph and t_ph.has_text_frame:
-                fill_text_to_target(t_ph.text_frame, f"教学环节：{stage_title}")
+                fill_text_frame(t_ph.text_frame, full_title)
             else:
                 tb_p_title = slide_p.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
-                fill_text_to_target(tb_p_title.text_frame, f"教学环节：{stage_title}", size_pt=28, bold=True, color_rgb=(0, 51, 102))
+                fill_text_frame(tb_p_title.text_frame, full_title, default_size=28, default_color=(0, 51, 102))
 
-            # 设置正文
-            b_ph = None
-            for shape in slide_p.placeholders:
-                if shape != t_ph and shape.has_text_frame:
-                    b_ph = shape
-                    break
+            # 正文内容构造
+            if "points" in item and isinstance(item["points"], list):
+                content_text = "\n".join([f"• {pt}" for pt in item["points"]])
+            else:
+                t_act = item.get("teacher_activity", "")
+                s_act = item.get("student_activity", "")
+                d_intent = item.get("design_intent", "")
+                content_text = f"【教师活动】\n{t_act}\n\n【学生活动】\n{s_act}\n\n【设计意图】\n{d_intent}"
 
-            if b_ph:
-                fill_text_to_target(b_ph.text_frame, content_text)
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, content_text)
             else:
                 tb_p_body = slide_p.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-                fill_text_to_target(tb_p_body.text_frame, content_text, size_pt=16, color_rgb=(51, 51, 51))
+                fill_text_frame(tb_p_body.text_frame, content_text, default_size=16, default_color=(51, 51, 51))
 
-        # 3. 保存输出文件
+        # 3. 保存输出
         prs.save(output_path)
         print(f"[SUCCESS] PPT 成功生成至：{output_path}")
         return output_path
@@ -232,21 +298,13 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
         print(f"[ERROR PPT Generation] {str(e)}")
         traceback.print_exc()
 
-        # 保底输出
+        # 保底生成
         prs = Presentation()
         slide = prs.slides.add_slide(prs.slide_layouts[0])
-        title_shape = slide.shapes.title
-        if title_shape:
-            title_shape.text = basic_info.get("lesson_title", "教学设计 PPT")
+        if slide.shapes.title:
+            slide.shapes.title.text = basic_info.get("lesson_title", "教学设计 PPT")
         prs.save(output_path)
         return output_path
-```eof
-
-### 关键修改要点总结：
-
-1. **绝对路径关联（重点）**：使用了 `BASE_DIR = os.path.dirname(os.path.abspath(__file__))`，保证无论程序在哪个路径下启动，都能精准定位到 `api/template.pptx`。
-2. **调试日志输出**：加入了 `Template Path ... Exists: True/False` 日志，您可以在 Vercel 或服务端控制台中实时观察模板是否成功找到。
-3. **占位符感知（Placeholders）**：代码会优先填充模板自带的标题框和主体框（保留模板设计者的字体风格和背景图片），仅在模板无占位符时才回退至手动建文本框。
 # ---------------------------------------------------------------------------
 
 import os
