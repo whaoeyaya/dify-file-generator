@@ -373,16 +373,20 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 break
 
-       # B. 填充主表格
+    # B. 填充主表格
         if len(doc.tables) > 0:
             table = doc.tables[0]
 
             for idx, row in enumerate(table.rows):
-                # 提取第一列文本（通常是表格的左侧标题列）
+                # 提取第一列文本及整行文本（去除前后空白）
                 first_cell_txt = row.cells[0].text.strip() if len(row.cells) > 0 else ""
                 row_text = "".join([c.text.strip() for c in row.cells])
 
-                # 1. 基础信息行
+                # 忽略表头/装饰行（避免干扰）
+                if any(header_tag in row_text for header_tag in ["教学流程", "※教学过程※", "教学环节"]):
+                    continue
+
+                # 1. 基础信息行（精准定位键值对）
                 if any(k in row_text for k in ["授课教师", "学段", "授课时间"]):
                     for c_idx, cell in enumerate(row.cells):
                         cell_txt = cell.text.strip()
@@ -413,7 +417,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                 elif "学情分析" in first_cell_txt:
                     row.cells[-1].text = clean_text(basic_info.get("student_analysis") or word_data.get("student_analysis", ""))
 
-                # 3. 教学目标（修正：仅精准匹配第一列，去掉模棱两可的 or "核心素养" in row_text）
+                # 3. 教学目标
                 elif "教学目标" in first_cell_txt:
                     obj = word_data.get("teaching_objectives") or basic_info.get("teaching_objectives", {})
                     if isinstance(obj, dict):
@@ -438,59 +442,62 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     else:
                         row.cells[-1].text = clean_text(tm)
 
-                # 6. 归纳总结 / 作业设计 / 素养发展（单独精准匹配第一列）
-                elif "归纳" in first_cell_txt or "总结" in first_cell_txt:
+                # 6. 归纳总结 / 作业设计 / 素养发展（适配多标题合并在同一单元格）
+                elif any(k in first_cell_txt for k in ["归纳总结", "作业设计", "素养发展"]):
                     sh_dict = word_data.get("summary_and_homework", {})
                     summary_text = sh_dict.get("summary", "") if isinstance(sh_dict, dict) else ""
                     if not summary_text:
                         summary_text = "引导学生回顾梳理本节课的核心知识与解题思路。"
-                    row.cells[-1].text = clean_text(summary_text)
 
-                elif "作业" in first_cell_txt:
                     hw = word_data.get("homework", {})
                     if isinstance(hw, dict):
                         b = clean_text(hw.get("basic", ""))
                         a = clean_text(hw.get("advanced", ""))
-                        row.cells[-1].text = f"基础作业：{b}\n拓展作业：{a}" if a else f"{b}"
+                        hw_text = f"基础作业：{b}\n拓展作业：{a}" if a else f"基础作业：{b}"
                     else:
-                        row.cells[-1].text = clean_text(hw)
+                        hw_text = clean_text(hw)
 
-                elif "素养" in first_cell_txt:
                     objs = word_data.get("teaching_objectives", {})
                     literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else ""
-                    row.cells[-1].text = clean_text(literacy_text if literacy_text else "提升数学/学科逻辑思维与综合实践应用素养。")
+                    if not literacy_text:
+                        literacy_text = "提升学科核心素养与综合实践应用能力。"
 
-                # 7. 板书设计
-                elif "板书" in first_cell_txt:
+                    # 合并写入该单元格
+                    row.cells[-1].text = (
+                        f"【归纳总结】\n{clean_text(summary_text)}\n\n"
+                        f"【作业设计】\n{hw_text}\n\n"
+                        f"【素养发展】\n{clean_text(literacy_text)}"
+                    )
+
+                # 7. 板书设计（指向下一行的空单元格）
+                elif "板书设计" in row_text:
                     board_data = word_data.get("board_design", "")
-                    target_cell = row.cells[-1]
-                    if idx + 1 < len(table.rows) and "板书" in table.rows[idx].cells[0].text:
-                        target_cell = table.rows[idx + 1].cells[-1]
-                    
-                    if isinstance(board_data, dict):
-                        target_cell.text = ""
-                        if "title" in board_data:
-                            p = target_cell.paragraphs[0]
-                            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            run = p.add_run(clean_text(board_data["title"]))
-                            run.bold = True
-                        if "sections" in board_data and isinstance(board_data["sections"], list):
-                            for section in board_data["sections"]:
-                                p = target_cell.add_paragraph()
-                                p.add_run(f"【{clean_text(section.get('heading', ''))}】\n").bold = True
-                                for item in section.get("items", []):
-                                    target_cell.add_paragraph(f"  • {clean_text(item)}")
-                    else:
-                        target_cell.text = clean_text(board_data)
+                    # 寻找下一行填入数据
+                    if idx + 1 < len(table.rows):
+                        target_cell = table.rows[idx + 1].cells[0]
+                        if isinstance(board_data, dict):
+                            target_cell.text = ""
+                            if "title" in board_data:
+                                p = target_cell.paragraphs[0]
+                                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                run = p.add_run(clean_text(board_data["title"]))
+                                run.bold = True
+                            if "sections" in board_data and isinstance(board_data["sections"], list):
+                                for section in board_data["sections"]:
+                                    p = target_cell.add_paragraph()
+                                    p.add_run(f"【{clean_text(section.get('heading', ''))}】\n").bold = True
+                                    for item in section.get("items", []):
+                                        target_cell.add_paragraph(f"  • {clean_text(item)}")
+                        else:
+                            target_cell.text = clean_text(board_data)
 
-                # 8. 课后反思
-                elif "反思" in first_cell_txt:
-                    target_cell = row.cells[-1]
-                    if idx + 1 < len(table.rows) and "反思" in table.rows[idx].cells[0].text:
-                        target_cell = table.rows[idx + 1].cells[-1]
-                    target_cell.text = clean_text(word_data.get("reflection", ""))
+                # 8. 课后反思（指向下一行的空单元格）
+                elif "课后反思" in row_text:
+                    if idx + 1 < len(table.rows):
+                        target_cell = table.rows[idx + 1].cells[0]
+                        target_cell.text = clean_text(word_data.get("reflection", ""))
 
-                # 9. 教学过程匹配（5个大环节）
+                # 9. 教学过程 5 大环节匹配
                 else:
                     process_list = word_data.get('teaching_process', [])
 
@@ -504,15 +511,24 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
 
                     if isinstance(process_list, list):
                         for item in process_list:
-                            if not isinstance(item, dict): continue
+                            if not isinstance(item, dict):
+                                continue
                             p_stage = clean_text(item.get("stage", ""))
+                            
+                            # 匹配对应环节
+                            matched = False
                             for key, kw_list in stage_keywords.items():
                                 if any(kw in first_cell_txt for kw in kw_list) and any(kw in p_stage for kw in kw_list):
+                                    # 智能适配合并后的列索引
+                                    # 新模板中：0位是环节名，后续为教师活动、学生活动、设计意图
                                     if len(row.cells) >= 4:
                                         row.cells[1].text = clean_text(item.get("teacher_activity", ""))
                                         row.cells[2].text = clean_text(item.get("student_activity", ""))
                                         row.cells[3].text = clean_text(item.get("design_intent", ""))
+                                    matched = True
                                     break
+                            if matched:
+                                break
 
         # ==================== C. 在文档末尾追加扩展内容 ====================
 
