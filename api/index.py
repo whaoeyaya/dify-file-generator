@@ -313,188 +313,112 @@ import traceback
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# 基准路径解析
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WORD_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.docx")
-
 def clean_text(text):
-    """过滤 XML 不支持的非法控制字符，防止生成坏文件"""
+    """过滤控制字符，防止损坏 Word 文件"""
     if not isinstance(text, str):
         text = str(text) if text is not None else ""
     return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', text)
 
-def safe_json_parse(data):
-    """确保数据转为 dict 格式"""
+def format_dict_to_text(data):
+    """把字典格式的文本转为易读的换行文本"""
+    if isinstance(data, str):
+        return clean_text(data)
     if isinstance(data, dict):
-        return data
-    if isinstance(data, str) and data.strip():
-        clean_str = data.strip().lstrip('\ufeff')
-        try:
-            parsed = json.loads(clean_str)
-            if isinstance(parsed, str):
-                parsed = json.loads(parsed)
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
-    return {}
+        lines = []
+        for k, v in data.items():
+            lines.append(f"【{k}】\n{clean_text(v)}")
+        return "\n\n".join(lines)
+    return ""
 
-def generate_word_lesson_plan(word_data, basic_info, output_path):
+def fix_lesson_plan_doc(word_data, basic_info, template_path, output_path):
     try:
-        # 1. 解析数据
-        basic_info = safe_json_parse(basic_info)
-        word_data = safe_json_parse(word_data)
+        doc = Document(template_path) if os.path.exists(template_path) else Document()
 
-        # 2. 加载模板
-        if os.path.exists(WORD_TEMPLATE_PATH):
-            doc = Document(WORD_TEMPLATE_PATH)
-        else:
-            doc = Document()
+        lesson_title = clean_text(basic_info.get('lesson_title') or word_data.get('lesson_title', '条形统计图——兴宾区甘蔗产量统计'))
 
-        lesson_title = clean_text(basic_info.get('lesson_title') or word_data.get('lesson_title', ''))
-
-        # A. 替换主标题
+        # 1. 替换标题
         for p in doc.paragraphs:
             if "教学设计" in p.text or "《 》" in p.text:
-                p.text = f"《{lesson_title}》教学设计" if lesson_title else p.text
+                p.text = f"《{lesson_title}》教学设计"
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 break
 
-        # B. 填充主表格
-        if len(doc.tables) > 0:
+        # 2. 精准填充表格
+        if doc.tables:
             table = doc.tables[0]
+            process_list = word_data.get('teaching_process', [])
 
             for idx, row in enumerate(table.rows):
-                first_cell_txt = row.cells[0].text.strip() if len(row.cells) > 0 else ""
-                row_text = "".join([c.text.strip() for c in row.cells])
+                # 提取当前行所有的可见文本，用于特征判定
+                row_cells_text = [c.text.strip() for c in row.cells]
+                first_cell = row_cells_text[0] if row_cells_text else ""
+                full_row_str = "".join(row_cells_text)
 
-                # 【关键修复1】跳过干扰表头行和装饰行
-                if any(h in row_text for h in ["教学流程", "牛刀小试", "※教学过程※", "教学环节"]):
+                # --- 规则 A：过滤干扰表头与装饰行 ---
+                if any(k in full_row_str for k in ["教学流程", "牛刀小试", "※教学过程※"]):
                     continue
 
-                # 1. 基础信息行
-                if any(k in row_text for k in ["授课教师", "学段", "授课时间"]):
-                    for c_idx, cell in enumerate(row.cells):
-                        cell_txt = cell.text.strip()
+                # --- 规则 B：基础元数据行（教师、时间、学段等）---
+                if any(k in full_row_str for k in ["授课教师", "学段", "授课时间"]):
+                    for c_idx, cell_txt in enumerate(row_cells_text):
                         if cell_txt == "授课教师" and c_idx + 1 < len(row.cells):
                             row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_name", ""))
-                        elif cell_txt == "授课教师单位" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_unit", ""))
-                        elif cell_txt == "授课日期" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_date", ""))
                         elif cell_txt == "学段" and c_idx + 1 < len(row.cells):
                             row.cells[c_idx + 1].text = clean_text(basic_info.get("stage", ""))
                         elif cell_txt == "学科" and c_idx + 1 < len(row.cells):
                             row.cells[c_idx + 1].text = clean_text(basic_info.get("subject", ""))
-                        elif cell_txt == "适用年级" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("grade", ""))
-                        elif cell_txt == "授课时间" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_time", ""))
-                        elif cell_txt == "课型" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_type", ""))
 
-                # 2. 课题、教材分析、学情分析
-                elif first_cell_txt.startswith("课题"):
-                    row.cells[1].text = lesson_title
+                # --- 规则 C：单项信息行（精准定位第二列 row.cells[1]）---
+                elif "课题" in first_cell:
+                    if len(row.cells) > 1: row.cells[1].text = lesson_title
 
-                elif "教材分析" in first_cell_txt:
-                    row.cells[1].text = clean_text(basic_info.get("textbook_analysis") or word_data.get("textbook_analysis", ""))
+                elif "教材分析" in first_cell:
+                    if len(row.cells) > 1: row.cells[1].text = clean_text(word_data.get("textbook_analysis", ""))
 
-                elif "学情分析" in first_cell_txt:
-                    row.cells[1].text = clean_text(basic_info.get("student_analysis") or word_data.get("student_analysis", ""))
+                elif "学情分析" in first_cell:
+                    if len(row.cells) > 1: row.cells[1].text = clean_text(word_data.get("student_analysis", ""))
 
-                # 3. 教学目标
-                elif "教学目标" in first_cell_txt:
-                    obj = word_data.get("teaching_objectives") or basic_info.get("teaching_objectives", {})
+                elif "教学目标" in first_cell:
+                    obj = word_data.get("teaching_objectives", {})
                     if isinstance(obj, dict):
-                        k = clean_text(obj.get('knowledge', ''))
-                        a = clean_text(obj.get('ability', ''))
-                        l = clean_text(obj.get('literacy', ''))
-                        row.cells[1].text = f"1. 知识与技能：{k}\n2. 过程与方法：{a}\n3. 情感态度与价值观：{l}"
+                        txt = f"1. 知识与技能：{clean_text(obj.get('knowledge'))}\n" \
+                              f"2. 过程与方法：{clean_text(obj.get('ability'))}\n" \
+                              f"3. 情感态度与价值观：{clean_text(obj.get('literacy'))}"
                     else:
-                        row.cells[1].text = clean_text(obj)
+                        txt = clean_text(obj)
+                    if len(row.cells) > 1: row.cells[1].text = txt
 
-                # 4. 教学重难点
-                elif "重难点" in first_cell_txt or "重点" in first_cell_txt:
+                elif "重难点" in first_cell or "重点" in first_cell:
                     kp = clean_text(word_data.get('key_points', ''))
                     dp = clean_text(word_data.get('difficult_points', ''))
-                    row.cells[1].text = f"教学重点：{kp}\n教学难点：{dp}"
+                    if len(row.cells) > 1: row.cells[1].text = f"【教学重点】\n{kp}\n\n【教学难点】\n{dp}"
 
-                # 5. 教法与学法
-                elif "教法" in first_cell_txt or "学法" in first_cell_txt:
-                    tm = word_data.get("teaching_methods", "")
-                    if isinstance(tm, dict):
-                        row.cells[1].text = f"教法：{clean_text(tm.get('teacher_method', ''))}\n学法：{clean_text(tm.get('student_method', ''))}"
-                    else:
-                        row.cells[1].text = clean_text(tm)
+                elif "教法" in first_cell or "学法" in first_cell:
+                    if len(row.cells) > 1: row.cells[1].text = clean_text(word_data.get("teaching_methods", ""))
 
-                # 6. 归纳总结 / 作业设计 / 素养发展 (合并单元格处理)
-                elif any(k in first_cell_txt for k in ["归纳总结", "作业设计", "素养发展"]):
-                    sh_dict = word_data.get("summary_and_homework", {})
-                    summary_text = sh_dict.get("summary", "") if isinstance(sh_dict, dict) else ""
-                    if not summary_text:
-                        summary_text = "引导学生回顾梳理本节课的核心知识与解题思路。"
-
+                elif "作业设计" in first_cell or "归纳总结" in first_cell:
                     hw = word_data.get("homework", {})
-                    if isinstance(hw, dict):
-                        b = clean_text(hw.get("basic", ""))
-                        a = clean_text(hw.get("advanced", ""))
-                        hw_text = f"基础作业：{b}\n拓展作业：{a}" if a else f"基础作业：{b}"
-                    else:
-                        hw_text = clean_text(hw)
+                    hw_txt = f"基础作业：{hw.get('basic', '')}\n拓展作业：{hw.get('advanced', '')}" if isinstance(hw, dict) else clean_text(hw)
+                    if len(row.cells) > 1: row.cells[1].text = hw_txt
 
-                    objs = word_data.get("teaching_objectives", {})
-                    literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else ""
-                    if not literacy_text:
-                        literacy_text = "提升学科核心素养与综合实践应用能力。"
+                # --- 规则 D：跨行的大单元格（板书与反思）---
+                elif "※板书设计※" in full_row_str and idx + 1 < len(table.rows):
+                    table.rows[idx + 1].cells[0].text = clean_text(word_data.get("board_design", ""))
 
-                    # 获取该合并行的最后真正可见单元格
-                    target_c = row.cells[-1]
-                    target_c.text = (
-                        f"【归纳总结】\n{clean_text(summary_text)}\n\n"
-                        f"【作业设计】\n{hw_text}\n\n"
-                        f"【素养发展】\n{clean_text(literacy_text)}"
-                    )
+                elif "※课后反思※" in full_row_str and idx + 1 < len(table.rows):
+                    table.rows[idx + 1].cells[0].text = clean_text(word_data.get("reflection", ""))
 
-                # 7. 板书设计 (指向下一行的第一个 Cell)
-                elif "※板书设计※" in row_text and idx + 1 < len(table.rows):
-                    target_cell = table.rows[idx + 1].cells[0]
-                    board_data = word_data.get("board_design", "")
-                    target_cell.text = clean_text(board_data)
-
-                # 8. 课后反思 (指向下一行的第一个 Cell)
-                elif "※课后反思※" in row_text and idx + 1 < len(table.rows):
-                    target_cell = table.rows[idx + 1].cells[0]
-                    target_cell.text = clean_text(word_data.get("reflection", ""))
-
-                # 9. 教学过程 5 大环节匹配
-                else:
-                    process_list = word_data.get('teaching_process', [])
-                    stage_keywords = {
-                        "创设": ["创设", "导入", "情境"],
-                        "探究": ["探究", "建构", "归纳"],
-                        "理解": ["理解", "应用", "巩固"],
-                        "迁移": ["迁移", "拓展", "延伸"],
-                        "创新": ["创新", "提升", "综合"]
-                    }
-
-                    if isinstance(process_list, list):
-                        for item in process_list:
-                            if not isinstance(item, dict):
-                                continue
-                            p_stage = clean_text(item.get("stage", ""))
-                            
-                            matched = False
-                            for key, kw_list in stage_keywords.items():
-                                if any(kw in first_cell_txt for kw in kw_list) and any(kw in p_stage for kw in kw_list):
-                                    # 精准对齐单元格：0=环节名, 1=教师活动, 2=学生活动, 3=设计意图
-                                    if len(row.cells) >= 4:
-                                        row.cells[1].text = clean_text(item.get("teacher_activity", ""))
-                                        row.cells[2].text = clean_text(item.get("student_activity", ""))
-                                        row.cells[3].text = clean_text(item.get("design_intent", ""))
-                                    matched = True
-                                    break
-                            if matched:
-                                break
+                # --- 规则 E：教学过程（要求必须有 4 列结构：环节 | 教师活动 | 学生活动 | 设计意图）---
+                elif len(row.cells) >= 4:
+                    # 使用列表序号或关键字双向比对
+                    for p_item in process_list:
+                        stage_name = p_item.get("stage", "")
+                        # 只要第一列的文本包含了环节名称（或反之），即判定匹配
+                        if (first_cell and first_cell in stage_name) or (stage_name and stage_name in first_cell):
+                            row.cells[1].text = clean_text(p_item.get("teacher_activity", ""))
+                            row.cells[2].text = clean_text(p_item.get("student_activity", ""))
+                            row.cells[3].text = clean_text(p_item.get("design_intent", ""))
+                            break
 
   # ==================== C. 在文档末尾追加扩展内容 ====================
 
