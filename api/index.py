@@ -513,49 +513,20 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
         # ==================== C. 在文档末尾追加扩展内容 ====================
 
         # 4. 课堂短视频推荐（本土化课堂情景导入）
-        video_rec = word_data.get("video_recommendation") or word_data.get("localized_import_video")
-        if video_rec:
-            doc.add_heading("附录四：课堂短视频推荐（本土化课堂情景导入）", level=2)
-            
-            # 情况 A：如果数据是字典（包含视频名称、来源/链接、情景导入说明等详细字段）
-            if isinstance(video_rec, dict):
-                title = video_rec.get("title", "未命名视频")
-                source = video_rec.get("source") or video_rec.get("url", "无")
-                duration = video_rec.get("duration", "暂无")
-                description = video_rec.get("description") or video_rec.get("import_scenario", "")
-                
-                p_info = doc.add_paragraph()
-                p_info.add_run("视频名称：").bold = True
-                p_info.add_run(f"{title}\n")
-                p_info.add_run("视频时长/来源：").bold = True
-                p_info.add_run(f"{duration} / {source}\n")
-                
-                if description:
-                    p_desc = doc.add_paragraph()
-                    p_desc.add_run("情景导入设计与本土化建议：\n").bold = True
-                    p_desc.add_run(str(description))
-
-            # 情况 B：如果数据是列表（推荐了多个短视频）
-            elif isinstance(video_rec, list):
-                for idx, item in enumerate(video_rec, 1):
-                    if isinstance(item, dict):
-                        v_title = item.get("title", f"推荐视频 {idx}")
-                        v_desc = item.get("description") or item.get("scenario", "")
-                        p = doc.add_paragraph()
-                        p.add_run(f"推荐 {idx}：{v_title}\n").bold = True
-                        if v_desc:
-                            p.add_run(f"导入情景说明：{v_desc}")
-                    else:
-                        doc.add_paragraph(f"{idx}. {item}")
-
-            # 情况 C：如果数据直接是纯文本/字符串
-            else:
-                doc.add_paragraph(str(video_rec))
+        localized_import = (
+            word_data.get("localized_import") 
+            or word_data.get("import_scenario") 
+            or word_data.get("video_recommendation")
+        )
+        if localized_import:
+            doc.add_heading("附录一：课堂短视频推荐（本土化课堂情景导入）", level=2)
+            # 无论大模型返回的是纯文本还是列表/字典，直接转成字符串添加段落即可
+            doc.add_paragraph(str(localized_import))
                 
         # 1. 自主学习任务单
         task_sheet = word_data.get("task_sheet") or word_data.get("task_list")
         if task_sheet:
-            doc.add_heading("附录一：自主学习任务单", level=2)
+            doc.add_heading("附录二：自主学习任务单", level=2)
             if isinstance(task_sheet, list):
                 for item in task_sheet:
                     doc.add_paragraph(f"• {item}")
@@ -565,7 +536,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
         # 2. 分层达标习题
         tiered_exercises = word_data.get("tiered_exercises") or word_data.get("exercises")
         if tiered_exercises:
-            doc.add_heading("附录二：分层达标习题", level=2)
+            doc.add_heading("附录三：分层达标习题", level=2)
             if isinstance(tiered_exercises, dict):
                 for level, content in tiered_exercises.items():
                     p = doc.add_paragraph()
@@ -577,7 +548,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
         # 3. 微课讲解脚本
         micro_script = word_data.get("micro_lesson_script") or word_data.get("micro_script")
         if micro_script:
-            doc.add_heading("附录三：微课讲解脚本", level=2)
+            doc.add_heading("附录四：微课讲解脚本", level=2)
             if isinstance(micro_script, list):
                 for idx, step in enumerate(micro_script, 1):
                     if isinstance(step, dict):
