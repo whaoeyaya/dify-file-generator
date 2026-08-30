@@ -367,7 +367,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                 first_cell_txt = row_cells_text[0] if row_cells_text else ""
                 row_text = "".join(row_cells_text)
 
-                # 1. 忽略修饰行与过程表头
+                # 1. 忽略修饰行与流程图示行
                 if any(h in row_text for h in ["※教学过程※", "教学环节", "教学流程", "牛刀小试"]):
                     continue
 
@@ -439,7 +439,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     if len(row.cells) > 1:
                         row.cells[1].text = txt
 
-                # 9. 归纳总结 / 作业设计 / 素养发展 (对应新模板中的三合一行)
+                # 9. 归纳总结 作业设计 素养发展 (已调整为跨 6 列合并模式)
                 elif any(k in first_cell_txt for k in ["归纳总结", "作业设计", "素养发展"]):
                     sh_dict = word_data.get("summary_and_homework", {})
                     summary_text = sh_dict.get("summary", "") if isinstance(sh_dict, dict) else ""
@@ -455,9 +455,9 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                         hw_text = clean_text(hw)
 
                     objs = word_data.get("teaching_objectives", {})
-                    literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else "提升数据分析与逻辑思维，培养数学应用核心素养。"
+                    literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else "提升数据分析与逻辑思维，培养核心素养。"
 
-                    # 新模板中教师活动列对应 index 为 1，跨列写入全宽
+                    # 由于该行合并了右侧 6 列，数据写入 row.cells[1]
                     if len(row.cells) > 1:
                         row.cells[1].text = (
                             f"【归纳总结】\n{clean_text(summary_text)}\n\n"
@@ -465,10 +465,10 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             f"【素养发展】\n{clean_text(literacy_text)}"
                         )
 
-                # 10. 板书设计 (下一行的 0 号单元格)
+                # 10. 板书设计 (写入下一行的第 0 号单元格)
                 elif "※板书设计※" in row_text and idx + 1 < len(table.rows):
                     target_cell = table.rows[idx + 1].cells[0]
-                    target_cell.text = ""  # 清空原占位文字
+                    target_cell.text = "" 
                     board_data = word_data.get("board_design", "")
                     if isinstance(board_data, dict):
                         lines = [f"【{board_data.get('title', '')}】"]
@@ -480,12 +480,12 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     else:
                         target_cell.text = clean_text(board_data)
 
-                # 11. 课后反思 (下一行的 0 号单元格)
+                # 11. 课后反思 (写入下一行的第 0 号单元格)
                 elif "※课后反思※" in row_text and idx + 1 < len(table.rows):
                     target_cell = table.rows[idx + 1].cells[0]
                     target_cell.text = clean_text(word_data.get("reflection", ""))
 
-                # 12. 5大教学过程匹配 (适配新模板列布局: 1=教师活动, 3=学生活动, 5=设计意图)
+                # 12. 教学过程环节匹配 (1=教师活动, 3=学生活动, 5=设计意图)
                 else:
                     process_list = word_data.get('teaching_process', [])
                     stage_keywords = {
@@ -501,7 +501,6 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             if not isinstance(item, dict): continue
                             p_stage = clean_text(item.get("stage", ""))
 
-                            # 匹配阶段名称
                             for key, kw_list in stage_keywords.items():
                                 if any(kw in first_cell_txt for kw in kw_list) and any(kw in p_stage for kw in kw_list):
                                     if len(row.cells) >= 6:
@@ -509,6 +508,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                                         row.cells[3].text = clean_text(item.get("student_activity", ""))
                                         row.cells[5].text = clean_text(item.get("design_intent", ""))
                                     break
+
 
       
         # ==================== C. 在文档末尾追加扩展内容 ====================
