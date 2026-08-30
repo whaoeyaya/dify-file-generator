@@ -485,7 +485,61 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                                         row.cells[2].text = str(item.get("student_activity", ""))
                                         row.cells[3].text = str(item.get("design_intent", ""))
                                     break
+# ---------------- Page: 学习任务单 ----------------
+        task_sheet = word_data.get("task_sheet") or word_data.get("task_list")
+        if task_sheet:
+            slide_ts = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_ts)
+            if t_ph and t_ph.has_text_frame:
+                fill_text_frame(t_ph.text_frame, "自主学习任务单", default_size=28)
+            
+            ts_text = task_sheet if isinstance(task_sheet, str) else "\n".join([f"• {item}" for item in task_sheet])
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, ts_text, default_size=13)
 
+        # ---------------- Page: 分层练习题 ----------------
+        tiered_exercises = word_data.get("tiered_exercises") or word_data.get("exercises")
+        if tiered_exercises:
+            slide_ex = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_ex)
+            if t_ph and t_ph.has_text_frame:
+                fill_text_frame(t_ph.text_frame, "分层达标习题", default_size=28)
+
+            ex_lines = []
+            if isinstance(tiered_exercises, dict):
+                # 支持 基础/进阶/拓展 或 Level 1/2/3 分层结构
+                for level, content in tiered_exercises.items():
+                    ex_lines.append(f"【{level}】\n{content}")
+                ex_text = "\n\n".join(ex_lines)
+            else:
+                ex_text = str(tiered_exercises)
+
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, ex_text, default_size=13)
+
+        # ---------------- Page: 微课讲解脚本 ----------------
+        micro_script = word_data.get("micro_lesson_script") or word_data.get("micro_script")
+        if micro_script:
+            slide_ms = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_ms)
+            if t_ph and t_ph.has_text_frame:
+                fill_text_frame(t_ph.text_frame, "微课讲解脚本", default_size=28)
+
+            script_lines = []
+            if isinstance(micro_script, list):
+                for idx, step in enumerate(micro_script, 1):
+                    if isinstance(step, dict):
+                        scene = step.get("scene", f"画面{idx}")
+                        audio = step.get("audio") or step.get("script", "")
+                        script_lines.append(f"【{scene}】\n{audio}")
+                    else:
+                        script_lines.append(f"{idx}. {step}")
+                ms_text = "\n\n".join(script_lines)
+            else:
+                ms_text = str(micro_script)
+
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, ms_text, default_size=12)
         doc.save(output_path)
     except Exception as e:
         print(f"[ERROR Word Generation] {str(e)}")
