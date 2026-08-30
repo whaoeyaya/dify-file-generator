@@ -309,6 +309,8 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
 
 import os
 import json
+import re
+import traceback
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
@@ -316,18 +318,33 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORD_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.docx")
 
+def clean_text(text):
+    """清理字符串中可能导致 Word 文件损坏的 XML 非法控制字符"""
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
+    # 移除 ASCII 控制字符（保留 \n \r \t）
+    return re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', text)
+
 def safe_json_parse(data):
-    """确保数据转为 dict 格式"""
+    """确保数据安全解析为 dict 格式，防止编码错误"""
     if isinstance(data, dict):
         return data
     if isinstance(data, str) and data.strip():
+        # 清理 BOM 隐藏字符
+        clean_str = data.strip().lstrip('\ufeff')
         try:
-            parsed = json.loads(data)
+            parsed = json.loads(clean_str)
             if isinstance(parsed, str):
                 parsed = json.loads(parsed)
-            return parsed
+            return parsed if isinstance(parsed, dict) else {}
         except Exception:
-            return {}
+            try:
+                # 兼容单引号解析
+                import ast
+                parsed = ast.literal_eval(clean_str)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
     return {}
 
 def generate_word_lesson_plan(word_data, basic_info, output_path):
@@ -336,13 +353,18 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
         basic_info = safe_json_parse(basic_info)
         word_data = safe_json_parse(word_data)
 
-        # 2. 读取 Word 模板
+        # 2. 读取 Word 模板（增加容错处理：若模板损坏则重新建立新文档）
+        doc = None
         if os.path.exists(WORD_TEMPLATE_PATH):
-            doc = Document(WORD_TEMPLATE_PATH)
+            try:
+                doc = Document(WORD_TEMPLATE_PATH)
+            except Exception as template_err:
+                print(f"[Warning] 模板文件存在但损坏/格式不兼容，将使用空白文档: {template_err}")
+                doc = Document()
         else:
             doc = Document()
 
-        lesson_title = basic_info.get('lesson_title') or word_data.get('lesson_title', '')
+        lesson_title = clean_text(basic_info.get('lesson_title') or word_data.get('lesson_title', ''))
 
         # A. 替换主标题
         for p in doc.paragraphs:
@@ -363,78 +385,78 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     for c_idx, cell in enumerate(row.cells):
                         cell_txt = cell.text.strip()
                         if cell_txt == "授课教师" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_name", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_name", ""))
                         elif cell_txt == "授课教师单位" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_unit", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_unit", ""))
                         elif cell_txt == "授课日期" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_date", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_date", ""))
                         elif cell_txt == "学段" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("stage", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("stage", ""))
                         elif cell_txt == "学科" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("subject", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("subject", ""))
                         elif cell_txt == "适用年级" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("grade", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("grade", ""))
                         elif cell_txt == "授课时间" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_time", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_time", ""))
                         elif cell_txt == "课型" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_type", ""))
+                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_type", ""))
 
                 # 2. 课题与基础分析
                 elif row.cells[0].text.strip().startswith("课题"):
                     row.cells[-1].text = lesson_title
 
                 elif "教材分析" in row.cells[0].text:
-                    row.cells[-1].text = str(basic_info.get("textbook_analysis") or word_data.get("textbook_analysis", ""))
+                    row.cells[-1].text = clean_text(basic_info.get("textbook_analysis") or word_data.get("textbook_analysis", ""))
 
                 elif "学情分析" in row.cells[0].text:
-                    row.cells[-1].text = str(basic_info.get("student_analysis") or word_data.get("student_analysis", ""))
+                    row.cells[-1].text = clean_text(basic_info.get("student_analysis") or word_data.get("student_analysis", ""))
 
                 # 3. 教学目标
                 elif "教学目标" in row.cells[0].text or "核心素养" in row_text:
                     obj = word_data.get("teaching_objectives") or basic_info.get("teaching_objectives", {})
                     if isinstance(obj, dict):
-                        k = obj.get('knowledge', '')
-                        a = obj.get('ability', '')
-                        l = obj.get('literacy', '')
+                        k = clean_text(obj.get('knowledge', ''))
+                        a = clean_text(obj.get('ability', ''))
+                        l = clean_text(obj.get('literacy', ''))
                         row.cells[-1].text = f"1. 知识与技能：{k}\n2. 过程与方法：{a}\n3. 情感态度与价值观/核心素养：{l}"
                     else:
-                        row.cells[-1].text = str(obj)
+                        row.cells[-1].text = clean_text(obj)
 
                 # 4. 教学重难点
                 elif "教学重难点" in row_text or "教学重点" in row_text:
-                    kp = word_data.get('key_points', '')
-                    dp = word_data.get('difficult_points', '')
+                    kp = clean_text(word_data.get('key_points', ''))
+                    dp = clean_text(word_data.get('difficult_points', ''))
                     row.cells[-1].text = f"教学重点：{kp}\n教学难点：{dp}"
 
                 # 5. 教法与学法
                 elif "教法与学法" in row_text or "教法：" in row_text:
                     tm = word_data.get("teaching_methods", "")
                     if isinstance(tm, dict):
-                        row.cells[-1].text = f"教法：{tm.get('teacher_method', '')}\n学法：{tm.get('student_method', '')}"
+                        row.cells[-1].text = f"教法：{clean_text(tm.get('teacher_method', ''))}\n学法：{clean_text(tm.get('student_method', ''))}"
                     else:
-                        row.cells[-1].text = str(tm)
+                        row.cells[-1].text = clean_text(tm)
 
-                # 6. 新模板拆分出的 归纳总结 / 作业设计 / 素养发展（单独填入）
+                # 6. 归纳总结 / 作业设计 / 素养发展
                 elif row.cells[0].text.strip() == "归纳总结":
                     sh_dict = word_data.get("summary_and_homework", {})
                     summary_text = sh_dict.get("summary", "") if isinstance(sh_dict, dict) else ""
                     if not summary_text:
                         summary_text = "引导学生回顾梳理本节课的核心知识与解题思路。"
-                    row.cells[-1].text = summary_text
+                    row.cells[-1].text = clean_text(summary_text)
 
                 elif row.cells[0].text.strip() == "作业设计":
                     hw = word_data.get("homework", {})
                     if isinstance(hw, dict):
-                        b = hw.get("basic", "")
-                        a = hw.get("advanced", "")
+                        b = clean_text(hw.get("basic", ""))
+                        a = clean_text(hw.get("advanced", ""))
                         row.cells[-1].text = f"基础作业：{b}\n拓展作业：{a}" if a else f"{b}"
                     else:
-                        row.cells[-1].text = str(hw)
+                        row.cells[-1].text = clean_text(hw)
 
                 elif row.cells[0].text.strip() in ["素养发展", "发展素养"]:
                     objs = word_data.get("teaching_objectives", {})
                     literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else ""
-                    row.cells[-1].text = literacy_text if literacy_text else "提升数学/学科逻辑思维与综合实践应用素养。"
+                    row.cells[-1].text = clean_text(literacy_text if literacy_text else "提升数学/学科逻辑思维与综合实践应用素养。")
 
                 # 7. 板书设计
                 elif "板书设计" in row_text:
@@ -448,25 +470,25 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                         if "title" in board_data:
                             p = target_cell.paragraphs[0]
                             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            run = p.add_run(board_data["title"])
+                            run = p.add_run(clean_text(board_data["title"]))
                             run.bold = True
                         if "sections" in board_data and isinstance(board_data["sections"], list):
                             for section in board_data["sections"]:
                                 p = target_cell.add_paragraph()
-                                p.add_run(f"【{section.get('heading', '')}】\n").bold = True
+                                p.add_run(f"【{clean_text(section.get('heading', ''))}】\n").bold = True
                                 for item in section.get("items", []):
-                                    target_cell.add_paragraph(f"  • {item}")
+                                    target_cell.add_paragraph(f"  • {clean_text(item)}")
                     else:
-                        target_cell.text = str(board_data)
+                        target_cell.text = clean_text(board_data)
 
                 # 8. 课后反思
                 elif "课后反思" in row_text:
                     target_cell = row.cells[-1]
                     if idx + 1 < len(table.rows) and "课后反思" in table.rows[idx].cells[0].text:
                         target_cell = table.rows[idx + 1].cells[-1]
-                    target_cell.text = str(word_data.get("reflection", ""))
+                    target_cell.text = clean_text(word_data.get("reflection", ""))
 
-                # 9. 教学过程多环节匹配
+                # 9. 教学过程匹配
                 else:
                     first_cell = row.cells[0].text.strip()
                     process_list = word_data.get('teaching_process', [])
@@ -482,18 +504,16 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     if isinstance(process_list, list):
                         for item in process_list:
                             if not isinstance(item, dict): continue
-                            p_stage = str(item.get("stage", ""))
+                            p_stage = clean_text(item.get("stage", ""))
                             for key, kw_list in stage_keywords.items():
                                 if any(kw in first_cell for kw in kw_list) and any(kw in p_stage for kw in kw_list):
                                     if len(row.cells) >= 4:
-                                        row.cells[1].text = str(item.get("teacher_activity", ""))
-                                        row.cells[2].text = str(item.get("student_activity", ""))
-                                        row.cells[3].text = str(item.get("design_intent", ""))
+                                        row.cells[1].text = clean_text(item.get("teacher_activity", ""))
+                                        row.cells[2].text = clean_text(item.get("student_activity", ""))
+                                        row.cells[3].text = clean_text(item.get("design_intent", ""))
                                     break
 
-        # ==================== C. 在文档末尾追加扩展内容（附录部分） ====================
-
-        # 附录一：课堂短视频推荐（本土化课堂情景导入）
+        # ==================== C. 附录部分追加 ====================
         localized_import = (
             word_data.get("video_recommendation")
             or word_data.get("localized_import")
@@ -504,82 +524,72 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
             if isinstance(localized_import, dict):
                 for k, v in localized_import.items():
                     p = doc.add_paragraph()
-                    p.add_run(f"【{k}】\n").bold = True
-                    p.add_run(str(v))
+                    p.add_run(f"【{clean_text(k)}】\n").bold = True
+                    p.add_run(clean_text(v))
             else:
-                doc.add_paragraph(str(localized_import))
+                doc.add_paragraph(clean_text(localized_import))
 
-        # 附录二：自主学习任务单
         task_sheet = word_data.get("task_sheet") or word_data.get("task_list")
         if task_sheet:
             doc.add_heading("附录二：自主学习任务单", level=2)
             if isinstance(task_sheet, dict):
                 for layer, content in task_sheet.items():
                     p = doc.add_paragraph()
-                    p.add_run(f"【{layer}】\n").bold = True
-                    p.add_run(str(content))
+                    p.add_run(f"【{clean_text(layer)}】\n").bold = True
+                    p.add_run(clean_text(content))
             elif isinstance(task_sheet, list):
                 for item in task_sheet:
-                    doc.add_paragraph(f"• {item}")
+                    doc.add_paragraph(f"• {clean_text(item)}")
             else:
-                doc.add_paragraph(str(task_sheet))
+                doc.add_paragraph(clean_text(task_sheet))
 
-        # 附录三：分层达标习题
         tiered_exercises = word_data.get("tiered_exercises") or word_data.get("exercises")
         if tiered_exercises:
             doc.add_heading("附录三：分层达标习题", level=2)
             if isinstance(tiered_exercises, dict):
                 for level, content in tiered_exercises.items():
                     p = doc.add_paragraph()
-                    p.add_run(f"【{level}】\n").bold = True
-                    p.add_run(str(content))
+                    p.add_run(f"【{clean_text(level)}】\n").bold = True
+                    p.add_run(clean_text(content))
             else:
-                doc.add_paragraph(str(tiered_exercises))
+                doc.add_paragraph(clean_text(tiered_exercises))
 
-        # 附录四：微课讲解脚本
         micro_script = word_data.get("micro_lesson_script") or word_data.get("micro_script")
         if micro_script:
             doc.add_heading("附录四：微课讲解脚本", level=2)
             if isinstance(micro_script, list):
                 for idx, step in enumerate(micro_script, 1):
                     if isinstance(step, dict):
-                        scene = step.get("scene", f"画面{idx}")
-                        audio = step.get("audio") or step.get("script", "")
+                        scene = clean_text(step.get("scene", f"画面{idx}"))
+                        audio = clean_text(step.get("audio") or step.get("script", ""))
                         p = doc.add_paragraph()
                         p.add_run(f"镜头 {idx}（{scene}）：\n").bold = True
-                        p.add_run(str(audio))
+                        p.add_run(audio)
                     else:
-                        doc.add_paragraph(f"{idx}. {step}")
+                        doc.add_paragraph(f"{idx}. {clean_text(step)}")
             else:
-                doc.add_paragraph(str(micro_script))
+                doc.add_paragraph(clean_text(micro_script))
 
-        # 附录五：高阶创新实践探究任务（新增适配）
         practice_tasks = word_data.get("practice_tasks")
         if practice_tasks and isinstance(practice_tasks, list):
             doc.add_heading("附录五：高阶创新实践探究任务", level=2)
             for task in practice_tasks:
                 if isinstance(task, dict):
                     p = doc.add_paragraph()
-                    p.add_run(f"任务名称：{task.get('task_name', '')}\n").bold = True
-                    p.add_run(f"任务要求：{task.get('requirements', '')}\n")
-                    p.add_run(f"评价标准：{task.get('evaluation', '')}\n")
+                    p.add_run(f"任务名称：{clean_text(task.get('task_name', ''))}\n").bold = True
+                    p.add_run(f"任务要求：{clean_text(task.get('requirements', ''))}\n")
+                    p.add_run(f"评价标准：{clean_text(task.get('evaluation', ''))}\n")
 
-        # 保存 Word 文档
+        # 确保保存路径目录存在
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         doc.save(output_path)
-        print(f"[SUCCESS Word Generation] 已成功生成文档: {output_path}")
+        print(f"[SUCCESS] 已成功生成文件: {output_path}")
 
     except Exception as e:
-        print(f"[ERROR Word Generation] {str(e)}")
+        print(f"[ERROR] 生成过程出错: {str(e)}")
         traceback.print_exc()
 
-        # 降级保底生成
-        doc = Document()
-        doc.add_heading(f"《{basic_info.get('lesson_title', '教学设计')}》", 0)
-        doc.add_paragraph(str(word_data))
-        doc.save(output_path)
-
     return output_path
-
 # ---------------------------------------------------------------------------
 # 3. HTTP 服务 Handler
 # ---------------------------------------------------------------------------
