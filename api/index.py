@@ -23,17 +23,8 @@ WORD_TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.docx')
 # 1. PPT 生成逻辑
 
 # ---------------------------------------------------------------------------
-# 1. PPT 生成逻辑（重构修正版）
+# 1. PPT 生成逻辑（适配已清理模板的版本）
 # ---------------------------------------------------------------------------
-
-def clear_existing_slides(prs, n=2):
-    """先彻底清理掉模板自带的前 N 页旧页面"""
-    slide_ids = [slide.slide_id for slide in prs.slides]
-    delete_count = min(n, len(slide_ids))
-    for _ in range(delete_count):
-        rId = prs.slides._sldIdLst[0].rId
-        prs.part.drop_rel(rId)
-        del prs.slides._sldIdLst[0]
 
 def set_font_style(run, size_pt, bold=False, color_rgb=(0, 51, 102)):
     """统一设置字体大小、加粗与颜色"""
@@ -43,24 +34,22 @@ def set_font_style(run, size_pt, bold=False, color_rgb=(0, 51, 102)):
 
 def generate_ppt_from_template(ppt_data, basic_info, output_path):
     try:
-        # 1. 安全解析数据并兼容不同的 JSON 结构
+        # 1. 安全解析数据
         ppt_data = safe_json_parse(ppt_data)
         basic_info = safe_json_parse(basic_info)
 
-        # 2. 读取模板
+        # 2. 直接读取已清理干扰页的全新 template.pptx
         if os.path.exists(PPT_TEMPLATE_PATH):
             prs = Presentation(PPT_TEMPLATE_PATH)
-            # ★ 关键修正 1：在生成新内容前，先彻底删除模板原本的前 2 页，防止混淆
-            clear_existing_slides(prs, n=2)
         else:
             prs = Presentation()
 
-        # 选用纯白/空白版式，避免被模板旧文本框或背景遮挡
+        # 使用模板的空白版式（通常版式 6 为纯净空白页，按需继承母版背景）
         blank_layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
 
-        # ---------------- Slide 1: 封面页 (字号 40pt/24pt, 居中/规范排版) ----------------
+        # ---------------- Slide 1: 封面页 (字号大且居中) ----------------
         slide_cover = prs.slides.add_slide(blank_layout)
-        title_box = slide_cover.shapes.add_textbox(Inches(1), Inches(1.5), Inches(11.3), Inches(4.5))
+        title_box = slide_cover.shapes.add_textbox(Inches(1), Inches(1.8), Inches(11.3), Inches(4.5))
         tf = title_box.text_frame
         tf.word_wrap = True
         
@@ -77,7 +66,7 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
         p2.text = sub_info
         set_font_style(p2.runs[0], size_pt=24, color_rgb=(80, 80, 80))
 
-        # ---------------- Slide 2: 教学目标与重难点 (大标题 32pt, 正文 20pt) ----------------
+        # ---------------- Slide 2: 教学目标与重难点 ----------------
         slide_target = prs.slides.add_slide(blank_layout)
         t_box = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(11.5), Inches(5.8))
         tf2 = t_box.text_frame
@@ -102,11 +91,11 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
         p_c.text = target_text
         set_font_style(p_c.runs[0], size_pt=20, color_rgb=(51, 51, 51))
 
-        # ---------------- Slide 3-7: 5 个教学环节 (多重数据源兼容 + 强力保底) ----------------
-        # ★ 关键修正 2：同时兼容 ppt_data 中的 "slides"、"teaching_process" 或 word_data 结构
+        # ---------------- Slide 3-7: 动态生成教学环节 ----------------
+        # 兼容 slides 列表与 5 环节结构
         process_list = ppt_data.get("slides") or ppt_data.get("teaching_process")
         
-        # 保底数据：万一 Dify 传过来的 JSON 里面没有教学过程，自动填充标准 5 环节，绝不留白
+        # 保底数据（防止 Dify 返回空数据）
         default_stages = [
             {"stage": "创设情境", "teacher_activity": "展示本土真实情境与问题，引入新课。", "student_activity": "观察图片与数据，思考并表达想法。", "design_intent": "激发学习兴趣，唤醒旧知。"},
             {"stage": "探究归纳建构新知", "teacher_activity": "组织小组合作与动手实践，引导归纳算理。", "student_activity": "动手操作、讨论交流并总结结论。", "design_intent": "培养动手实践与逻辑推理能力。"},
@@ -134,11 +123,8 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
             
             # 获取环节内容
             p_act = tf_p.add_paragraph()
-            
-            # 如果是 bullet_points 结构
             if "bullet_points" in item and isinstance(item["bullet_points"], list):
                 content_text = "\n" + "\n".join([f"• {pt}" for pt in item["bullet_points"]])
-            # 如果是 5 环节结构 (teacher_activity / student_activity / design_intent)
             else:
                 t_act = item.get("teacher_activity", "")
                 s_act = item.get("student_activity", "")
@@ -158,7 +144,6 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
 
     except Exception as e:
         print(f"[ERROR PPT Generation] {str(e)}")
-        # 发生异常时的极其强力的应急生成方案
         prs = Presentation()
         slide = prs.slides.add_slide(prs.slide_layouts[0])
         slide.shapes.title.text = basic_info.get("lesson_title", "教学设计")
