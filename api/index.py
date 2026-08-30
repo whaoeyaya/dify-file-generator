@@ -27,23 +27,26 @@ import traceback
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import PP_PLACEHOLDER
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # 1. 基准路径解析
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PPT_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.pptx")
+WORD_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.docx")
 
 def safe_json_parse(data):
     """安全解析字典或 JSON 字符串，兼容嵌套转义与顶层包裹"""
     if isinstance(data, dict):
         return data
-    if isinstance(data, str):
+    if isinstance(data, str) and data.strip():
         try:
             parsed = json.loads(data)
             if isinstance(parsed, str):  # 防止二次转义的 JSON 字符串
                 parsed = json.loads(parsed)
-            return parsed
+            return parsed if isinstance(parsed, (dict, list)) else {}
         except Exception:
             return {}
     return {}
@@ -132,25 +135,45 @@ def find_placeholders(slide):
 
 def fill_text_frame(tf, text_content, default_size=None, align=None, default_color=None):
     """
-    填充文本到 TextFrame，保留母版原本样式：
+    填充文本到 TextFrame，保留母版原本样式，并根据文本长度动态调整字号防止超出边框：
     1. 清空默认 Placeholder 示例文本
-    2. 支持按 \n 拆分成多个独立段落
-    3. 自动识别 【标签】 并加粗处理
+    2. 根据文本总长度自动计算适配字号（动态降级）
+    3. 支持按 \n 拆分成多个独立段落
+    4. 自动识别 【标签】 并加粗处理
     """
     tf.word_wrap = True
+    tf.margin_top = Inches(0.1)
+    tf.margin_bottom = Inches(0.1)
+    tf.margin_left = Inches(0.1)
+    tf.margin_right = Inches(0.1)
     tf.text = ""  # 清空占位符里的默认文本
 
     if isinstance(text_content, str):
         lines = [line.strip() for line in text_content.split("\n") if line.strip()]
     elif isinstance(text_content, list):
-        lines = text_content
+        lines = [str(item).strip() for item in text_content if str(item).strip()]
     else:
         lines = [str(text_content)]
+
+    # 智能字号压缩计算：防止文字过多超出 PPT 页面底边
+    total_char_count = sum(len(line) for line in lines)
+    calculated_size = default_size
+
+    if calculated_size:
+        if total_char_count > 450:
+            calculated_size = min(calculated_size, 11)
+        elif total_char_count > 300:
+            calculated_size = min(calculated_size, 13)
+        elif total_char_count > 180:
+            calculated_size = min(calculated_size, 14)
+        elif total_char_count > 100:
+            calculated_size = min(calculated_size, 16)
 
     for idx, line_text in enumerate(lines):
         p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
         if align is not None:
             p.alignment = align
+        p.space_after = Pt(4)
 
         # 识别带括号的标题项（例如：【教学重点】、【教师活动】）
         if line_text.startswith("【") and "】" in line_text:
@@ -162,19 +185,19 @@ def fill_text_frame(tf, text_content, default_size=None, align=None, default_col
             run_h = p.add_run()
             run_h.text = header_str
             run_h.font.bold = True
-            if default_size: run_h.font.size = Pt(default_size)
+            if calculated_size: run_h.font.size = Pt(calculated_size + 1)
             if default_color: run_h.font.color.rgb = RGBColor(*default_color)
 
             # 正文部分：常态
             if body_str:
                 run_b = p.add_run()
                 run_b.text = body_str
-                if default_size: run_b.font.size = Pt(default_size)
+                if calculated_size: run_b.font.size = Pt(calculated_size)
                 if default_color: run_b.font.color.rgb = RGBColor(*default_color)
         else:
             run = p.add_run()
             run.text = line_text
-            if default_size: run.font.size = Pt(default_size)
+            if calculated_size: run.font.size = Pt(calculated_size)
             if default_color: run.font.color.rgb = RGBColor(*default_color)
 
 def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pptx"):
@@ -209,7 +232,7 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             fill_text_frame(title_ph.text_frame, cover_title_text, align=PP_ALIGN.CENTER)
         else:
             t_box = slide_cover.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.3), Inches(2))
-            fill_text_frame(t_box.text_frame, cover_title_text, default_size=40, default_color=(0, 51, 102), align=PP_ALIGN.CENTER)
+            fill_text_frame(t_box.text_frame, cover_title_text, default_size=36, default_color=(0, 51, 102), align=PP_ALIGN.CENTER)
 
         teacher_name = final_basic_info.get("teacher_name", "教师")
         teacher_unit = final_basic_info.get("teacher_unit", "")
@@ -223,48 +246,48 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             fill_text_frame(subtitle_ph.text_frame, sub_info, align=PP_ALIGN.CENTER)
         else:
             s_box = slide_cover.shapes.add_textbox(Inches(1), Inches(4.5), Inches(11.3), Inches(2))
-            fill_text_frame(s_box.text_frame, sub_info, default_size=20, default_color=(80, 80, 80), align=PP_ALIGN.CENTER)
+            fill_text_frame(s_box.text_frame, sub_info, default_size=18, default_color=(80, 80, 80), align=PP_ALIGN.CENTER)
 
         # ---------------- Slide 2: 教材与学情分析 ----------------
-        textbook_analysis = final_basic_info.get("textbook_analysis")
-        student_analysis = final_basic_info.get("student_analysis")
+        textbook_analysis = final_basic_info.get("textbook_analysis") or word_data.get("textbook_analysis")
+        student_analysis = final_basic_info.get("student_analysis") or word_data.get("student_analysis")
         
         if textbook_analysis or student_analysis:
             slide_analysis = prs.slides.add_slide(content_layout)
             t_ph, _, b_ph = find_placeholders(slide_analysis)
             
             if t_ph and t_ph.has_text_frame:
-                fill_text_frame(t_ph.text_frame, "教材与学情分析")
+                fill_text_frame(t_ph.text_frame, "教材与学情分析", default_size=28)
             else:
-                tb_title = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
-                fill_text_frame(tb_title.text_frame, "教材与学情分析", default_size=32, default_color=(0, 51, 102))
+                tb_title = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(0.8))
+                fill_text_frame(tb_title.text_frame, "教材与学情分析", default_size=28, default_color=(0, 51, 102))
 
             analysis_text = [
                 f"【教材分析】\n{textbook_analysis or '无'}",
                 f"【学情分析】\n{student_analysis or '无'}"
             ]
             if b_ph and b_ph.has_text_frame:
-                fill_text_frame(b_ph.text_frame, "\n\n".join(analysis_text))
+                fill_text_frame(b_ph.text_frame, "\n\n".join(analysis_text), default_size=16)
             else:
-                tb_body = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-                fill_text_frame(tb_body.text_frame, "\n\n".join(analysis_text), default_size=16, default_color=(51, 51, 51))
+                tb_body = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.2))
+                fill_text_frame(tb_body.text_frame, "\n\n".join(analysis_text), default_size=15, default_color=(51, 51, 51))
 
         # ---------------- Slide 3: 教学目标与重难点 ----------------
         slide_target = prs.slides.add_slide(content_layout)
         t_ph, _, b_ph = find_placeholders(slide_target)
 
         if t_ph and t_ph.has_text_frame:
-            fill_text_frame(t_ph.text_frame, "教学目标与重难点")
+            fill_text_frame(t_ph.text_frame, "教学目标与重难点", default_size=28)
         else:
-            tb_title = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
-            fill_text_frame(tb_title.text_frame, "教学目标与重难点", default_size=32, default_color=(0, 51, 102))
+            tb_title = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(0.8))
+            fill_text_frame(tb_title.text_frame, "教学目标与重难点", default_size=28, default_color=(0, 51, 102))
 
         # 组装教学目标
         objs = word_data.get("teaching_objectives") or word_data.get("targets", {})
         if isinstance(objs, dict):
-            k_obj = objs.get("knowledge", "")
-            a_obj = objs.get("ability", "")
-            l_obj = objs.get("literacy", "")
+            k_obj = objs.get("knowledge") or objs.get("knowledge_and_skills", "")
+            a_obj = objs.get("ability") or objs.get("process_and_methods", "")
+            l_obj = objs.get("literacy") or objs.get("emotions_and_values", "")
         else:
             k_obj, a_obj, l_obj = str(objs), "", ""
 
@@ -281,13 +304,26 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
         ]
 
         if b_ph and b_ph.has_text_frame:
-            fill_text_frame(b_ph.text_frame, "\n\n".join(target_text))
+            fill_text_frame(b_ph.text_frame, "\n\n".join(target_text), default_size=15)
         else:
-            tb_body = slide_target.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-            fill_text_frame(tb_body.text_frame, "\n\n".join(target_text), default_size=16, default_color=(51, 51, 51))
+            tb_body = slide_target.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.2))
+            fill_text_frame(tb_body.text_frame, "\n\n".join(target_text), default_size=15, default_color=(51, 51, 51))
 
-        # ---------------- Slide 4+: 动态读取教学环节 ----------------
-        process_list = word_data.get("teaching_process") or word_data.get("slides") or []
+        # ---------------- Slide 4+: 动态读取教学环节 (修复漏页关键点) ----------------
+        # 全方位抓取各种可能包含教学环节的 key
+        process_list = (
+            word_data.get("teaching_process") or 
+            word_data.get("slides") or 
+            word_data.get("process") or 
+            word_data.get("teaching_steps") or []
+        )
+
+        # 如果 process_list 是字符串，尝试再次转义 parse
+        if isinstance(process_list, str):
+            process_list = safe_json_parse(process_list)
+
+        if isinstance(process_list, dict):
+            process_list = list(process_list.values())
 
         for idx, item in enumerate(process_list, 1):
             if not isinstance(item, dict):
@@ -296,27 +332,27 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             slide_p = prs.slides.add_slide(content_layout)
             t_ph, _, b_ph = find_placeholders(slide_p)
 
-            stage_title = item.get("stage") or item.get("title") or f"环节 {idx}"
+            stage_title = item.get("stage") or item.get("title") or item.get("step_name") or f"环节 {idx}"
             full_title = f"教学环节：{stage_title}" if not stage_title.startswith("教学环节") else stage_title
             
             if t_ph and t_ph.has_text_frame:
-                fill_text_frame(t_ph.text_frame, full_title)
+                fill_text_frame(t_ph.text_frame, full_title, default_size=28)
             else:
-                tb_p_title = slide_p.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
+                tb_p_title = slide_p.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(0.8))
                 fill_text_frame(tb_p_title.text_frame, full_title, default_size=28, default_color=(0, 51, 102))
 
             # 正文内容提取
-            t_act = item.get("teacher_activity", "")
-            s_act = item.get("student_activity", "")
-            d_intent = item.get("design_intent", "")
+            t_act = item.get("teacher_activity") or item.get("teacher_action") or ""
+            s_act = item.get("student_activity") or item.get("student_action") or ""
+            d_intent = item.get("design_intent") or item.get("intent") or ""
             
             content_text = f"【教师活动】\n{t_act}\n\n【学生活动】\n{s_act}\n\n【设计意图】\n{d_intent}"
 
             if b_ph and b_ph.has_text_frame:
-                fill_text_frame(b_ph.text_frame, content_text)
+                fill_text_frame(b_ph.text_frame, content_text, default_size=14)
             else:
-                tb_p_body = slide_p.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-                fill_text_frame(tb_p_body.text_frame, content_text, default_size=15, default_color=(51, 51, 51))
+                tb_p_body = slide_p.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.2))
+                fill_text_frame(tb_p_body.text_frame, content_text, default_size=14, default_color=(51, 51, 51))
 
         # ---------------- Slide Next: 板书设计与课后作业 ----------------
         board_design = word_data.get("board_design")
@@ -327,9 +363,9 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             t_ph, _, b_ph = find_placeholders(slide_extra)
 
             if t_ph and t_ph.has_text_frame:
-                fill_text_frame(t_ph.text_frame, "板书设计与作业布置")
+                fill_text_frame(t_ph.text_frame, "板书设计与作业布置", default_size=28)
             else:
-                tb_e_title = slide_extra.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
+                tb_e_title = slide_extra.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(0.8))
                 fill_text_frame(tb_e_title.text_frame, "板书设计与作业布置", default_size=28, default_color=(0, 51, 102))
 
             extra_lines = []
@@ -346,10 +382,10 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             extra_text = "\n\n".join(extra_lines)
 
             if b_ph and b_ph.has_text_frame:
-                fill_text_frame(b_ph.text_frame, extra_text)
+                fill_text_frame(b_ph.text_frame, extra_text, default_size=14)
             else:
-                tb_e_body = slide_extra.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-                fill_text_frame(tb_e_body.text_frame, extra_text, default_size=15, default_color=(51, 51, 51))
+                tb_e_body = slide_extra.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.2))
+                fill_text_frame(tb_e_body.text_frame, extra_text, default_size=14, default_color=(51, 51, 51))
 
         # 3. 保存输出
         prs.save(output_path)
@@ -367,6 +403,9 @@ def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pp
             slide.shapes.title.text = "教学设计 PPT"
         prs.save(output_path)
         return output_path
+
+# ---------------------------------------------------------------------------
+# generate_word_lesson_plan 函数保持原样不动
 # ---------------------------------------------------------------------------
 
 import os
