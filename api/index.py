@@ -496,73 +496,71 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             if matched:
                                 break
 
-        # ==================== 【关键修复2】追加输出所有后半部分内容 (附录) ====================
-        
-        # 追加 PPT 课件设计
-        ppt_slides = word_data.get("ppt_slides")
-        if ppt_slides and isinstance(ppt_slides, list):
-            doc.add_heading("附录一：PPT 教学课件设计", level=2)
-            for slide in ppt_slides:
-                if isinstance(slide, dict):
+  # ==================== C. 在文档末尾追加扩展内容 ====================
+
+        # 4. 课堂短视频推荐（本土化课堂情景导入）
+        localized_import = (
+            word_data.get("localized_import") 
+            or word_data.get("import_scenario") 
+            or word_data.get("video_recommendation")
+        )
+        if localized_import:
+            doc.add_heading("附录一：课堂短视频推荐（本土化课堂情景导入）", level=2)
+            # 无论大模型返回的是纯文本还是列表/字典，直接转成字符串添加段落即可
+            doc.add_paragraph(str(localized_import))
+                
+        # 1. 自主学习任务单
+        task_sheet = word_data.get("task_sheet") or word_data.get("task_list")
+        if task_sheet:
+            doc.add_heading("附录二：自主学习任务单", level=2)
+            if isinstance(task_sheet, list):
+                for item in task_sheet:
+                    doc.add_paragraph(f"• {item}")
+            else:
+                doc.add_paragraph(str(task_sheet))
+
+        # 2. 分层达标习题
+        tiered_exercises = word_data.get("tiered_exercises") or word_data.get("exercises")
+        if tiered_exercises:
+            doc.add_heading("附录三：分层达标习题", level=2)
+            if isinstance(tiered_exercises, dict):
+                for level, content in tiered_exercises.items():
                     p = doc.add_paragraph()
-                    p.add_run(f"第 {slide.get('slide_number', '')} 页：{clean_text(slide.get('title', ''))}\n").bold = True
-                    p.add_run(f"【要点】\n{clean_text(slide.get('points', ''))}\n")
-                    p.add_run(f"【建议】{clean_text(slide.get('image_advice', ''))}\n")
-                    p.add_run(f"【互动】{clean_text(slide.get('interaction', ''))}\n")
+                    p.add_run(f"【{level}】\n").bold = True
+                    p.add_run(str(content))
+            else:
+                doc.add_paragraph(str(tiered_exercises))
 
-        # 追加视频与脚本
-        video_rec = word_data.get("video_recommendation")
-        if video_rec:
-            doc.add_heading("附录二：课堂短视频脚本与情境素材", level=2)
-            doc.add_paragraph(clean_text(video_rec))
+        # 3. 微课讲解脚本
+        micro_script = word_data.get("micro_lesson_script") or word_data.get("micro_script")
+        if micro_script:
+            doc.add_heading("附录四：微课讲解脚本", level=2)
+            if isinstance(micro_script, list):
+                for idx, step in enumerate(micro_script, 1):
+                    if isinstance(step, dict):
+                        scene = step.get("scene", f"画面{idx}")
+                        audio = step.get("audio") or step.get("script", "")
+                        p = doc.add_paragraph()
+                        p.add_run(f"镜头 {idx}（{scene}）：\n").bold = True
+                        p.add_run(str(audio))
+                    else:
+                        doc.add_paragraph(f"{idx}. {step}")
+            else:
+                doc.add_paragraph(str(micro_script))
 
-        # 追加自主学习任务单
-        task_sheet = word_data.get("task_sheet")
-        if task_sheet and isinstance(task_sheet, dict):
-            doc.add_heading("附录三：自主学习任务单", level=2)
-            for k, v in task_sheet.items():
-                p = doc.add_paragraph()
-                p.add_run(f"【{clean_text(k)}】\n").bold = True
-                p.add_run(clean_text(v))
-
-        # 追加分层练习题
-        tiered_ex = word_data.get("tiered_exercises")
-        if tiered_ex and isinstance(tiered_ex, dict):
-            doc.add_heading("附录四：分层达标练习题及解析", level=2)
-            for k, v in tiered_ex.items():
-                p = doc.add_paragraph()
-                p.add_run(f"【{clean_text(k)}】\n").bold = True
-                p.add_run(clean_text(v))
-
-        # 追加微课脚本
-        micro_script = word_data.get("micro_lesson_script")
-        if micro_script and isinstance(micro_script, list):
-            doc.add_heading("附录五：微课讲解脚本", level=2)
-            for idx, step in enumerate(micro_script, 1):
-                if isinstance(step, dict):
-                    p = doc.add_paragraph()
-                    p.add_run(f"场景 {idx}（{clean_text(step.get('scene', ''))}）：\n").bold = True
-                    p.add_run(clean_text(step.get('audio', '')))
-
-        # 追加高阶实践任务
-        practice = word_data.get("practice_tasks")
-        if practice and isinstance(practice, list):
-            doc.add_heading("附录六：高阶创新实践探究任务", level=2)
-            for t in practice:
-                if isinstance(t, dict):
-                    p = doc.add_paragraph()
-                    p.add_run(f"任务：{clean_text(t.get('task_name', ''))}\n").bold = True
-                    p.add_run(f"要求：{clean_text(t.get('requirements', ''))}\n")
-                    p.add_run(f"评价标准：{clean_text(t.get('evaluation', ''))}\n")
-
-        # 3. 保存导出
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        # 保存 Word 文档
         doc.save(output_path)
-        print(f"成功生成完整教学设计文档: {output_path}")
+        print(f"[SUCCESS Word Generation] 已成功生成文档: {output_path}")
 
     except Exception as e:
-        print(f"生成失败: {str(e)}")
+        print(f"[ERROR Word Generation] {str(e)}")
         traceback.print_exc()
+        
+        # 降级保底生成
+        doc = Document()
+        doc.add_heading(f"《{basic_info.get('lesson_title', '教学设计')}》", 0)
+        doc.add_paragraph(str(word_data))
+        doc.save(output_path)
 
     return output_path
 
