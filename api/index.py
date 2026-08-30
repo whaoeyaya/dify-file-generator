@@ -381,8 +381,8 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             row.cells[1].text = clean_text(basic_info.get("teacher_name", ""))
                         if len(row.cells) > 3:
                             row.cells[3].text = clean_text(basic_info.get("teacher_unit", ""))
-                        if len(row.cells) > 4:
-                            row.cells[4].text = clean_text(basic_info.get("lesson_date", ""))
+                        if len(row.cells) > 5:
+                            row.cells[5].text = clean_text(basic_info.get("lesson_date", ""))
                     
                     # 第二行：学段(col 1) | 学科(col 3) | 适用年级(col 4)
                     elif "学段" in first_cell:
@@ -390,8 +390,8 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             row.cells[1].text = clean_text(basic_info.get("stage", ""))
                         if len(row.cells) > 3:
                             row.cells[3].text = clean_text(basic_info.get("subject", ""))
-                        if len(row.cells) > 4:
-                            row.cells[4].text = clean_text(basic_info.get("grade", ""))
+                        if len(row.cells) > 5:
+                            row.cells[5].text = clean_text(basic_info.get("grade", ""))
                     
                     # 第三行：授课时间(col 1) | 课型(col 3) | 授课时数(col 4)
                     elif "授课时间" in first_cell:
@@ -399,8 +399,8 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                             row.cells[1].text = clean_text(basic_info.get("lesson_time", ""))
                         if len(row.cells) > 3:
                             row.cells[3].text = clean_text(basic_info.get("lesson_type", ""))
-                        if len(row.cells) > 4:
-                            row.cells[4].text = clean_text(basic_info.get("lesson_hours", "1课时"))
+                        if len(row.cells) > 5:
+                            row.cells[5].text = clean_text(basic_info.get("lesson_hours", "1课时"))
 
 
                 # 3. 课题
