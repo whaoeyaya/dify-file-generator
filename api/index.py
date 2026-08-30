@@ -371,28 +371,27 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                 if any(h in row_text for h in ["※教学过程※", "教学环节", "教学流程", "牛刀小试"]):
                     continue
 
-                # 2. 基础信息行 (教师、学科、学段、时间等)
+                   # 1. 基础信息行
                 if any(k in row_text for k in ["授课教师", "学段", "授课时间"]):
                     for c_idx, cell in enumerate(row.cells):
                         cell_txt = cell.text.strip()
                         if cell_txt == "授课教师" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_name", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_name", ""))
                         elif cell_txt == "授课教师单位" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("teacher_unit", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("teacher_unit", ""))
                         elif cell_txt == "授课日期" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_date", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_date", ""))
                         elif cell_txt == "学段" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("stage", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("stage", ""))
                         elif cell_txt == "学科" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("subject", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("subject", ""))
                         elif cell_txt == "适用年级" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("grade", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("grade", ""))
                         elif cell_txt == "授课时间" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_time", ""))
+                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_time", ""))
                         elif cell_txt == "课型" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_type", ""))
-                        elif cell_txt == "授课时数" and c_idx + 1 < len(row.cells):
-                            row.cells[c_idx + 1].text = clean_text(basic_info.get("lesson_hours", "1课时"))
+                            row.cells[c_idx + 1].text = str(basic_info.get("lesson_type", ""))
+
 
                 # 3. 课题
                 elif "课题" in first_cell_txt:
