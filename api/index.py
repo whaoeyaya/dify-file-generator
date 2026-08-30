@@ -21,7 +21,6 @@ WORD_TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.docx')
 
 # ---------------------------------------------------------------------------
 # 1. PPT 生成逻辑
-
 import os
 import json
 import traceback
@@ -36,15 +35,41 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PPT_TEMPLATE_PATH = os.path.join(BASE_DIR, "template.pptx")
 
 def safe_json_parse(data):
-    """安全解析字典或 JSON 字符串"""
+    """安全解析字典或 JSON 字符串，兼容嵌套转义与顶层包裹"""
     if isinstance(data, dict):
         return data
     if isinstance(data, str):
         try:
-            return json.loads(data)
+            parsed = json.loads(data)
+            if isinstance(parsed, str):  # 防止二次转义的 JSON 字符串
+                parsed = json.loads(parsed)
+            return parsed
         except Exception:
             return {}
     return {}
+
+def extract_llm_payload(raw_data):
+    """
+    智能解包 LLM 的输出：自动识别 structured_output、text、word_data 等不同层级，
+    确保提取出完整的 basic_info 与 word_data。
+    """
+    data = safe_json_parse(raw_data)
+    
+    # 优先提取 structured_output
+    if "structured_output" in data and isinstance(data["structured_output"], dict):
+        data = data["structured_output"]
+
+    basic_info = data.get("basic_info", {})
+    
+    # 获取核心数据内容（兼容 word_data / ppt_content / 根节点）
+    word_data = data.get("word_data") or data.get("ppt_content") or data
+
+    # 防护：如果 word_data 包含 basic_info，再次合并
+    if isinstance(word_data, dict) and "basic_info" in word_data:
+        if not basic_info:
+            basic_info = word_data.get("basic_info", {})
+
+    return basic_info, word_data
 
 def get_layout_by_type(prs):
     """
@@ -152,18 +177,14 @@ def fill_text_frame(tf, text_content, default_size=None, align=None, default_col
             if default_size: run.font.size = Pt(default_size)
             if default_color: run.font.color.rgb = RGBColor(*default_color)
 
-def generate_ppt_from_template(ppt_data, basic_info, output_path):
+def generate_ppt_from_template(ppt_data, basic_info=None, output_path="output.pptx"):
     try:
-        # 1. 安全解析输入数据
-        ppt_data = safe_json_parse(ppt_data)
-        basic_info = safe_json_parse(basic_info)
-
-        # 兼容 structured_output 顶层节点
-        ppt_content = ppt_data.get("ppt_content") or {}
-        word_data = ppt_data.get("word_data") or ppt_data.get("word_content") or ppt_data
-
-        if "basic_info" in ppt_data and isinstance(ppt_data["basic_info"], dict):
-            basic_info.update(ppt_data["basic_info"])
+        # 1. 动态抽取与解析 LLM 返回的数据结构
+        parsed_basic_info, word_data = extract_llm_payload(ppt_data)
+        
+        # 补充外部传入的 basic_info (如果有)
+        ext_basic = safe_json_parse(basic_info) if basic_info else {}
+        final_basic_info = {**parsed_basic_info, **ext_basic}
 
         # 2. 读取 PPT 模板
         template_exists = os.path.exists(PPT_TEMPLATE_PATH)
@@ -175,27 +196,28 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
             print("[WARN PPT Engine] 模板文件未找到，降级使用默认空白 Presentation。")
             prs = Presentation()
 
-        # 获取合适的封面和内容页母版布局
         cover_layout, content_layout = get_layout_by_type(prs)
 
-        lesson_title = basic_info.get("lesson_title") or word_data.get("lesson_title", "教学课件")
+        lesson_title = final_basic_info.get("lesson_title") or word_data.get("lesson_title", "教学课件")
 
         # ---------------- Slide 1: 封面页 ----------------
         slide_cover = prs.slides.add_slide(cover_layout)
         title_ph, subtitle_ph, _ = find_placeholders(slide_cover)
 
-        # 填充标题
-        cover_title_text = f"{lesson_title} 教学课件"
+        cover_title_text = f"{lesson_title}" if "课件" in lesson_title else f"{lesson_title} 教学课件"
         if title_ph and title_ph.has_text_frame:
             fill_text_frame(title_ph.text_frame, cover_title_text, align=PP_ALIGN.CENTER)
         else:
             t_box = slide_cover.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.3), Inches(2))
             fill_text_frame(t_box.text_frame, cover_title_text, default_size=40, default_color=(0, 51, 102), align=PP_ALIGN.CENTER)
 
-        # 填充副标题
+        teacher_name = final_basic_info.get("teacher_name", "教师")
+        teacher_unit = final_basic_info.get("teacher_unit", "")
+        unit_str = f"（{teacher_unit}）" if teacher_unit else ""
+        
         sub_info = (
-            f"学科：{basic_info.get('subject', '数学')}  |  年级：{basic_info.get('grade', '三年级')}\n"
-            f"执教教师：{basic_info.get('teacher_name', '教师')}"
+            f"学科：{final_basic_info.get('subject', '数学')}  |  年级：{final_basic_info.get('grade', '四年级')}\n"
+            f"执教教师：{teacher_name}{unit_str}"
         )
         if subtitle_ph and subtitle_ph.has_text_frame:
             fill_text_frame(subtitle_ph.text_frame, sub_info, align=PP_ALIGN.CENTER)
@@ -203,18 +225,41 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
             s_box = slide_cover.shapes.add_textbox(Inches(1), Inches(4.5), Inches(11.3), Inches(2))
             fill_text_frame(s_box.text_frame, sub_info, default_size=20, default_color=(80, 80, 80), align=PP_ALIGN.CENTER)
 
-        # ---------------- Slide 2: 教学目标与重难点 ----------------
+        # ---------------- Slide 2: 教材与学情分析 ----------------
+        textbook_analysis = final_basic_info.get("textbook_analysis")
+        student_analysis = final_basic_info.get("student_analysis")
+        
+        if textbook_analysis or student_analysis:
+            slide_analysis = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_analysis)
+            
+            if t_ph and t_ph.has_text_frame:
+                fill_text_frame(t_ph.text_frame, "教材与学情分析")
+            else:
+                tb_title = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
+                fill_text_frame(tb_title.text_frame, "教材与学情分析", default_size=32, default_color=(0, 51, 102))
+
+            analysis_text = [
+                f"【教材分析】\n{textbook_analysis or '无'}",
+                f"【学情分析】\n{student_analysis or '无'}"
+            ]
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, "\n\n".join(analysis_text))
+            else:
+                tb_body = slide_analysis.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
+                fill_text_frame(tb_body.text_frame, "\n\n".join(analysis_text), default_size=16, default_color=(51, 51, 51))
+
+        # ---------------- Slide 3: 教学目标与重难点 ----------------
         slide_target = prs.slides.add_slide(content_layout)
         t_ph, _, b_ph = find_placeholders(slide_target)
 
-        # 设置标题
         if t_ph and t_ph.has_text_frame:
             fill_text_frame(t_ph.text_frame, "教学目标与重难点")
         else:
             tb_title = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
             fill_text_frame(tb_title.text_frame, "教学目标与重难点", default_size=32, default_color=(0, 51, 102))
 
-        # 组合目标内容
+        # 组装教学目标
         objs = word_data.get("teaching_objectives") or word_data.get("targets", {})
         if isinstance(objs, dict):
             k_obj = objs.get("knowledge", "")
@@ -239,55 +284,72 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
             fill_text_frame(b_ph.text_frame, "\n\n".join(target_text))
         else:
             tb_body = slide_target.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-            fill_text_frame(tb_body.text_frame, "\n\n".join(target_text), default_size=18, default_color=(51, 51, 51))
+            fill_text_frame(tb_body.text_frame, "\n\n".join(target_text), default_size=16, default_color=(51, 51, 51))
 
-        # ---------------- Slide 3+: 动态生成教学环节 ----------------
-        # 优先读取专门为 PPT 格式化好的 slides，其次读取教学流程
-        ppt_slides = ppt_content.get("slides")
-        process_list = ppt_slides if isinstance(ppt_slides, list) and len(ppt_slides) > 0 else (word_data.get("teaching_process") or [])
+        # ---------------- Slide 4+: 动态读取教学环节 ----------------
+        process_list = word_data.get("teaching_process") or word_data.get("slides") or []
 
-        default_stages = [
-            {"stage": "一、创设情境，引入新课", "teacher_activity": "展示真实情境与问题，引入新课。", "student_activity": "观察思考并表达想法。", "design_intent": "激发学习兴趣，唤醒旧知。"},
-            {"stage": "二、师生互动，探究新知", "teacher_activity": "组织小组合作与动手实践，引导归纳知识。", "student_activity": "动手操作、讨论交流并总结结论。", "design_intent": "培养实践与逻辑推理能力。"},
-            {"stage": "三、巩固练习，理解应用", "teacher_activity": "出示基础巩固练习题，指导规范解答。", "student_activity": "独立解答，并在全班汇报展示。", "design_intent": "及时巩固新知，规范解题步骤。"},
-            {"stage": "四、拓展延伸，提升素养", "teacher_activity": "结合生活实际，提供综合拓展练习。", "student_activity": "运用新知解决实际应用问题。", "design_intent": "体会知识与生活的密切联系。"},
-            {"stage": "五、全课总结，反思评价", "teacher_activity": "引导学生回顾本节课收获与疑问。", "student_activity": "谈谈收获，梳理知识框架。", "design_intent": "系统梳理，提升核心素养。"}
-        ]
-
-        if not isinstance(process_list, list) or len(process_list) == 0:
-            process_list = default_stages
-
-        for item in process_list:
+        for idx, item in enumerate(process_list, 1):
             if not isinstance(item, dict):
                 continue
 
             slide_p = prs.slides.add_slide(content_layout)
             t_ph, _, b_ph = find_placeholders(slide_p)
 
-            stage_title = item.get("stage") or item.get("title") or "教学环节"
+            stage_title = item.get("stage") or item.get("title") or f"环节 {idx}"
+            full_title = f"教学环节：{stage_title}" if not stage_title.startswith("教学环节") else stage_title
             
-            # 标题填充
-            full_title = stage_title if stage_title.startswith("教学环节") else f"教学环节：{stage_title}"
             if t_ph and t_ph.has_text_frame:
                 fill_text_frame(t_ph.text_frame, full_title)
             else:
                 tb_p_title = slide_p.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
                 fill_text_frame(tb_p_title.text_frame, full_title, default_size=28, default_color=(0, 51, 102))
 
-            # 正文内容构造
-            if "points" in item and isinstance(item["points"], list):
-                content_text = "\n".join([f"• {pt}" for pt in item["points"]])
-            else:
-                t_act = item.get("teacher_activity", "")
-                s_act = item.get("student_activity", "")
-                d_intent = item.get("design_intent", "")
-                content_text = f"【教师活动】\n{t_act}\n\n【学生活动】\n{s_act}\n\n【设计意图】\n{d_intent}"
+            # 正文内容提取
+            t_act = item.get("teacher_activity", "")
+            s_act = item.get("student_activity", "")
+            d_intent = item.get("design_intent", "")
+            
+            content_text = f"【教师活动】\n{t_act}\n\n【学生活动】\n{s_act}\n\n【设计意图】\n{d_intent}"
 
             if b_ph and b_ph.has_text_frame:
                 fill_text_frame(b_ph.text_frame, content_text)
             else:
                 tb_p_body = slide_p.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
-                fill_text_frame(tb_p_body.text_frame, content_text, default_size=16, default_color=(51, 51, 51))
+                fill_text_frame(tb_p_body.text_frame, content_text, default_size=15, default_color=(51, 51, 51))
+
+        # ---------------- Slide Next: 板书设计与课后作业 ----------------
+        board_design = word_data.get("board_design")
+        homework = word_data.get("homework")
+
+        if board_design or homework:
+            slide_extra = prs.slides.add_slide(content_layout)
+            t_ph, _, b_ph = find_placeholders(slide_extra)
+
+            if t_ph and t_ph.has_text_frame:
+                fill_text_frame(t_ph.text_frame, "板书设计与作业布置")
+            else:
+                tb_e_title = slide_extra.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(1))
+                fill_text_frame(tb_e_title.text_frame, "板书设计与作业布置", default_size=28, default_color=(0, 51, 102))
+
+            extra_lines = []
+            if board_design:
+                extra_lines.append(f"【板书设计】\n{board_design}")
+
+            if isinstance(homework, dict):
+                hw_basic = homework.get("basic", "")
+                hw_adv = homework.get("advanced", "")
+                extra_lines.append(f"【基础作业】\n{hw_basic}\n\n【拓展作业】\n{hw_adv}")
+            elif homework:
+                extra_lines.append(f"【课后作业】\n{homework}")
+
+            extra_text = "\n\n".join(extra_lines)
+
+            if b_ph and b_ph.has_text_frame:
+                fill_text_frame(b_ph.text_frame, extra_text)
+            else:
+                tb_e_body = slide_extra.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(11.5), Inches(5))
+                fill_text_frame(tb_e_body.text_frame, extra_text, default_size=15, default_color=(51, 51, 51))
 
         # 3. 保存输出
         prs.save(output_path)
@@ -302,7 +364,7 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
         prs = Presentation()
         slide = prs.slides.add_slide(prs.slide_layouts[0])
         if slide.shapes.title:
-            slide.shapes.title.text = basic_info.get("lesson_title", "教学设计 PPT")
+            slide.shapes.title.text = "教学设计 PPT"
         prs.save(output_path)
         return output_path
 # ---------------------------------------------------------------------------
