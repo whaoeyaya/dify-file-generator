@@ -5,7 +5,6 @@ import mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pptx import Presentation
 from pptx.util import Pt
-from pptx.dml.color import RGBColor
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -23,143 +22,38 @@ WORD_TEMPLATE_PATH = os.path.join(CURRENT_DIR, 'template.docx')
 # ---------------------------------------------------------------------------
 # 1. PPT 生成逻辑
 
-PPT_TEMPLATE_NAME = "template.pptx"
+def generate_ppt_from_template(ppt_data, basic_info, output_path):
+    prs = Presentation(PPT_TEMPLATE_PATH if os.path.exists(PPT_TEMPLATE_PATH) else None)
+    
+    # 设置封面标题
+    if len(prs.slides) > 0:
+        slide_layout = prs.slides[0]
+        for shape in slide_layout.shapes:
+            if shape.has_text_frame:
+                if "课题" in shape.text_frame.text or shape.text_frame.text == "":
+                    shape.text_frame.text = basic_info.get("lesson_title", "教学课件")
+                    break
 
-def safe_json_parse(data):
-    """确保数据转为 dict 格式"""
-    if isinstance(data, dict):
-        return data
-    if isinstance(data, str) and data.strip():
-        try:
-            return json.loads(data)
-        except Exception:
-            return {}
-    return {}
-
-def clear_existing_slides(prs, n=2):
-    """先彻底清理掉模板自带的前 N 页"""
-    slide_ids = [slide.slide_id for slide in prs.slides]
-    delete_count = min(n, len(slide_ids))
-    for _ in range(delete_count):
-        rId = prs.slides._sldIdLst[0].rId
-        prs.part.drop_rel(rId)
-        del prs.slides._sldIdLst[0]
-
-def set_font_style(run, size_pt, bold=False, color_rgb=(51, 51, 51)):
-    """统一设置字体大小与颜色"""
-    run.font.size = Pt(size_pt)
-    run.font.bold = bold
-    run.font.color.rgb = RGBColor(*color_rgb)
-
-def generate_ppt_lesson_plan(ppt_data, output_path):
-    try:
-        # 1. 深度安全解析
-        data = safe_json_parse(ppt_data)
+    # 动态生成内容页
+    bullet_slide_layout = prs.slide_layouts[1] if len(prs.slide_layouts) > 1 else prs.slide_layouts[0]
+    
+    for slide_info in ppt_data.get("slides", []):
+        slide = prs.slides.add_slide(bullet_slide_layout)
+        if slide.shapes.title:
+            slide.shapes.title.text = slide_info.get("title", "教学环节")
         
-        # 兼容多种数据结构入口
-        basic_info = data.get('basic_info', {}) or data
-        word_data = data.get('word_data', {}) or data.get('ppt_data', {}) or data
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape != slide.shapes.title:
+                tf = shape.text_frame
+                tf.clear()
+                for idx, pt_text in enumerate(slide_info.get("bullet_points", [])):
+                    p = tf.add_paragraph() if idx > 0 else tf.paragraphs[0]
+                    p.text = pt_text
+                    p.font.size = Pt(18)
+                break
 
-        current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-        template_path = os.path.join(current_dir, PPT_TEMPLATE_NAME)
-        
-        # 2. 读取模板并第一时间清理旧的前 2 页
-        if os.path.exists(template_path):
-            prs = Presentation(template_path)
-            clear_existing_slides(prs, n=2)
-        else:
-            prs = Presentation()
-
-        blank_layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
-
-        # ---------------- 3. 生成 Slide 1: 封面页 ----------------
-        slide_cover = prs.slides.add_slide(blank_layout)
-        title_box = slide_cover.shapes.add_textbox(Inches(1), Inches(1.5), Inches(11.3), Inches(4.5))
-        tf = title_box.text_frame
-        tf.word_wrap = True
-        
-        lesson_title = basic_info.get('lesson_title') or word_data.get('lesson_title', '教学设计演示课件')
-        p1 = tf.paragraphs[0]
-        p1.text = f"《{lesson_title}》教学课件"
-        set_font_style(p1.runs[0], size_pt=40, bold=True, color_rgb=(0, 51, 102))
-        
-        p2 = tf.add_paragraph()
-        p2.text = f"\n学科：{basic_info.get('subject', '数学')}  |  年级：{basic_info.get('grade', '五年级')}\n执教教师：{basic_info.get('teacher_name', '张老师')}"
-        set_font_style(p2.runs[0], size_pt=24, color_rgb=(80, 80, 80))
-
-        # ---------------- 4. 生成 Slide 2: 教学目标与重难点 ----------------
-        slide_target = prs.slides.add_slide(blank_layout)
-        t_box = slide_target.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(11.5), Inches(5.8))
-        tf2 = t_box.text_frame
-        tf2.word_wrap = True
-        
-        p_t = tf2.paragraphs[0]
-        p_t.text = "教学目标与重难点"
-        set_font_style(p_t.runs[0], size_pt=32, bold=True, color_rgb=(0, 51, 102))
-        
-        objs = word_data.get('teaching_objectives', {})
-        if isinstance(objs, dict):
-            k_obj = objs.get('knowledge', '掌握本节课基础概念与计算公式。')
-            a_obj = objs.get('ability', '经历自主探究与合作交流过程，提升逻辑思维能力。')
-        else:
-            k_obj, a_obj = str(objs), "提升数学知识应用能力。"
-
-        target_text = (
-            f"\n【教学重点】\n{word_data.get('key_points', '掌握核心计算公式与应用。')}\n\n"
-            f"【教学难点】\n{word_data.get('difficult_points', '理解公式推导过程及逻辑算理。')}\n\n"
-            f"【核心目标】\n"
-            f"• 知识与技能：{k_obj}\n"
-            f"• 过程与方法：{a_obj}"
-        )
-        p_c = tf2.add_paragraph()
-        p_c.text = target_text
-        set_font_style(p_c.runs[0], size_pt=20)
-
-        # ---------------- 5. 动态生成 Slide 3-7: 5 个教学环节 (含保底机制) ----------------
-        process_list = word_data.get('teaching_process', [])
-        
-        # 兜底保底数据：如果大模型没有吐出 process_list，强制使用这 5 个环节填充
-        default_stages = [
-            {"stage": "创设情境", "teacher_activity": "展示本土真实图片素材，提出核心问题引入新课。", "student_activity": "观察图片，思考并讨论教师提出的问题。", "design_intent": "激发学习兴趣，唤醒旧知。"},
-            {"stage": "探究归纳建构新知", "teacher_activity": "组织学生动手操作与小组合作，引导归纳规律。", "student_activity": "小组合作操作探究，总结并表达推导过程。", "design_intent": "培养动手实践与逻辑推理能力。"},
-            {"stage": "知识的理解应用", "teacher_activity": "出示基础练习题，指导规范解答步骤。", "student_activity": "独立完成练习，并在全班展示汇报。", "design_intent": "及时巩固新知，规范解题格式。"},
-            {"stage": "知识的迁移应用", "teacher_activity": "提供本土生活化综合问题，引导迁移运用。", "student_activity": "结合生活实际解决综合应用问题。", "design_intent": "体会数学与生活的密切联系。"},
-            {"stage": "知识的创新", "teacher_activity": "提出开放性思考题，引导一题多解。", "student_activity": "多角度思考，尝试创新解法。", "design_intent": "拓展创新思维，提升核心素养。"}
-        ]
-
-        # 如果没有获取到环节，直接用保底数据替换
-        if not isinstance(process_list, list) or len(process_list) == 0:
-            process_list = default_stages
-
-        for item in process_list:
-            if not isinstance(item, dict): continue
-            
-            slide_p = prs.slides.add_slide(blank_layout)
-            p_box = slide_p.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(11.5), Inches(6.2))
-            tf_p = p_box.text_frame
-            tf_p.word_wrap = True
-            
-            # 环节标题
-            p_stage = tf_p.paragraphs[0]
-            p_stage.text = f"教学环节：{item.get('stage', '环节展示')}"
-            set_font_style(p_stage.runs[0], size_pt=28, bold=True, color_rgb=(0, 51, 102))
-            
-            # 活动与意图内容
-            p_act = tf_p.add_paragraph()
-            p_act.text = (
-                f"\n【教师活动】\n{item.get('teacher_activity', '教师组织教学并引导思考。')}\n\n"
-                f"【学生活动】\n{item.get('student_activity', '学生参与讨论并回答问题。')}\n\n"
-                f"【设计意图】\n{item.get('design_intent', '促进学生深度理解与思维提升。')}"
-            )
-            set_font_style(p_act.runs[0], size_pt=18)
-
-        # 6. 保存 PPT
-        prs.save(output_path)
-        return output_path
-
-    except Exception as e:
-        print(f"[ERROR PPT Generation] {str(e)}")
-        return None
+    prs.save(output_path)
+    return output_path
 # ---------------------------------------------------------------------------
 
 import os
