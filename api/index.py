@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.parse
+import traceback
 import mimetypes
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pptx import Presentation
@@ -308,7 +309,6 @@ def generate_ppt_from_template(ppt_data, basic_info, output_path):
 
 import os
 import json
-import traceback
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
