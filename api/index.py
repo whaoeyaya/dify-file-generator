@@ -367,7 +367,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                 first_cell_txt = row_cells_text[0] if row_cells_text else ""
                 row_text = "".join(row_cells_text)
 
-                # 1. 忽略修饰行与流程图示行
+                # 1. 忽略固定修饰行、表头与流程图示行
                 if any(h in row_text for h in ["※教学过程※", "教学环节", "教学流程", "牛刀小试"]):
                     continue
 
@@ -439,7 +439,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     if len(row.cells) > 1:
                         row.cells[1].text = txt
 
-                # 9. 归纳总结 作业设计 素养发展 (已调整为跨 6 列合并模式)
+                # 9. 归纳总结 作业设计 素养发展 (适配新位置，写入 row.cells[1])
                 elif any(k in first_cell_txt for k in ["归纳总结", "作业设计", "素养发展"]):
                     sh_dict = word_data.get("summary_and_homework", {})
                     summary_text = sh_dict.get("summary", "") if isinstance(sh_dict, dict) else ""
@@ -457,7 +457,6 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     objs = word_data.get("teaching_objectives", {})
                     literacy_text = objs.get("literacy", "") if isinstance(objs, dict) else "提升数据分析与逻辑思维，培养核心素养。"
 
-                    # 由于该行合并了右侧 6 列，数据写入 row.cells[1]
                     if len(row.cells) > 1:
                         row.cells[1].text = (
                             f"【归纳总结】\n{clean_text(summary_text)}\n\n"
@@ -485,7 +484,7 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                     target_cell = table.rows[idx + 1].cells[0]
                     target_cell.text = clean_text(word_data.get("reflection", ""))
 
-                # 12. 教学过程环节匹配 (1=教师活动, 3=学生活动, 5=设计意图)
+                # 12. 5大教学过程环节匹配 (1=教师活动, 3=学生活动, 5=设计意图)
                 else:
                     process_list = word_data.get('teaching_process', [])
                     stage_keywords = {
