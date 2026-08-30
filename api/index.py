@@ -448,8 +448,32 @@ def generate_word_lesson_plan(word_data, basic_info, output_path):
                         f"【素养发展】\n{literacy_text}"
                     )
 
-                elif "板书设计" in row_text and idx + 1 < len(table.rows):
-                    table.rows[idx + 1].cells[-1].text = str(word_data.get("board_design", ""))
+            elif "板书设计" in row_text and idx + 1 < len(table.rows):
+                target_cell = table.rows[idx + 1].cells[-1]
+                
+                # 1. 清空单元格原有内容
+                target_cell.text = "" 
+                
+                board_text = str(word_data.get("board_design", ""))
+                
+                # 2. 按换行符分割文本，逐行写入并设置格式
+                lines = [line.strip() for line in board_text.split('\n') if line.strip()]
+                
+                for i, line in enumerate(lines):
+                    # 如果是第一行，利用单元格默认自带的第一个段落；后面的行新增段落
+                    p = target_cell.paragraphs[0] if i == 0 else target_cell.add_paragraph()
+                    
+                    # 设置段落左对齐，防止两端拉伸
+                    from docx.enum.text import WD_ALIGN_PARAGRAPH
+                    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    
+                    # 针对主标题/小标题自动加粗（比如包含 “课题”、“一、”、“二、” 或 “板书：” 的行）
+                    run = p.add_run(line)
+                    if i == 0 or line.startswith(("一、", "二、", "三、", "四、", "【", "课题")):
+                        run.bold = True
+                        run.font.size = Pt(11) # 标题字号稍微加大
+                    else:
+                        run.font.size = Pt(10.5) # 正文字号（五号）
 
                 elif "课后反思" in row_text and idx + 1 < len(table.rows):
                     table.rows[idx + 1].cells[-1].text = str(word_data.get("reflection", ""))
